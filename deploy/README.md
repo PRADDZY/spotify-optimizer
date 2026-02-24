@@ -76,6 +76,17 @@ Restore from a backup file:
 sudo bash deploy/monitoring/redis_restore.sh /path/to/backup.rdb
 ```
 
+## Hardening (Fail2ban + UFW)
+
+```bash
+sudo apt install -y fail2ban
+sudo systemctl enable --now fail2ban
+
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+```
+
 ## Templates
 
 - `deploy/systemd/spotify-backend.service`
