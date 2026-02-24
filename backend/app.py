@@ -141,6 +141,15 @@ async def log_requests(request: Request, call_next):
         status = response.status_code if response else 500
         if response is not None:
             response.headers["X-Request-ID"] = request_id
+        user_id = None
+        try:
+            sid = get_session_id(request)
+            if sid:
+                session = STORE.get_session(sid)
+                if session:
+                    user_id = session.get("user_id")
+        except Exception:
+            user_id = None
         LOGGER.info(
             "request",
             extra={
@@ -149,6 +158,7 @@ async def log_requests(request: Request, call_next):
                 "path": request.url.path,
                 "status": status,
                 "duration_ms": duration_ms,
+                "user_id": user_id,
             },
         )
 
@@ -291,9 +301,12 @@ def get_token_for_session(request: Request) -> Dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     oauth = build_oauth()
     if oauth.is_token_expired(token_info):
+        user_id = token_info.get("user_id")
         if "refresh_token" not in token_info:
             raise HTTPException(status_code=401, detail="Session expired")
         token_info = oauth.refresh_access_token(token_info["refresh_token"])
+        if user_id:
+            token_info["user_id"] = user_id
         STORE.set_session(sid, token_info)
 
     return token_info
@@ -360,6 +373,13 @@ def callback(request: Request, code: Optional[str] = None, state: Optional[str] 
 
     oauth = build_oauth()
     token_info = oauth.get_access_token(code)
+    try:
+        sp = spotipy.Spotify(auth=token_info["access_token"], requests_timeout=10)
+        profile = sp.current_user()
+        if profile and profile.get("id"):
+            token_info["user_id"] = profile.get("id")
+    except Exception:
+        pass
     STORE.set_session(sid, token_info)
 
     response = RedirectResponse(frontend_redirect)
