@@ -52,6 +52,16 @@ The template sets `client_max_body_size 2m` and conservative proxy buffer sizes 
 
 The frontend serves a static health file at `/.well-known/health`.
 
+## Redis Maintenance
+
+Optional daily Redis health/cleanup task:
+
+```bash
+sudo cp deploy/systemd/redis-maintenance.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now redis-maintenance.timer
+```
+
 ## Templates
 
 - `deploy/systemd/spotify-backend.service`
@@ -61,5 +71,8 @@ The frontend serves a static health file at `/.well-known/health`.
 - `deploy/monitoring/grafana-dashboard.json`
 - `deploy/monitoring/prometheus.yml`
 - `deploy/systemd/prometheus.service`
+- `deploy/systemd/redis-maintenance.service`
+- `deploy/systemd/redis-maintenance.timer`
+- `deploy/monitoring/redis_maintenance.sh`
 - `deploy/monitoring/grafana-provisioning/datasources/prometheus.yml`
 - `deploy/monitoring/grafana-provisioning/dashboards/dashboards.yml`
