@@ -114,6 +114,15 @@ app.add_middleware(
 )
 
 
+def check_rate_limit_store() -> Optional[bool]:
+    if rate_limit_storage.startswith("redis://") or rate_limit_storage.startswith("rediss://"):
+        try:
+            return bool(Redis.from_url(rate_limit_storage, decode_responses=True).ping())
+        except Exception:
+            return False
+    return None
+
+
 @app.exception_handler(RateLimitExceeded)
 def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
@@ -180,6 +189,9 @@ class SessionStore:
     def pop_state(self, state: str) -> Optional[str]:
         raise NotImplementedError
 
+    def ping(self) -> bool:
+        raise NotImplementedError
+
 
 class InMemoryStore(SessionStore):
     def __init__(self, ttl: int, state_ttl: int) -> None:
@@ -219,6 +231,9 @@ class InMemoryStore(SessionStore):
             self.states.pop(state, None)
         return value
 
+    def ping(self) -> bool:
+        return True
+
 
 class RedisStore(SessionStore):
     def __init__(self, url: str, ttl: int, state_ttl: int) -> None:
@@ -247,6 +262,12 @@ class RedisStore(SessionStore):
         if data is not None:
             self.redis.delete(key)
         return data
+
+    def ping(self) -> bool:
+        try:
+            return bool(self.redis.ping())
+        except Exception:
+            return False
 
 
 redis_url = os.getenv("REDIS_URL")
@@ -286,6 +307,21 @@ def spotify_for_session(request: Request) -> spotipy.Spotify:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def readiness():
+    checks = {
+        "sessions": STORE.ping(),
+    }
+    rate_limit_ok = check_rate_limit_store()
+    if rate_limit_ok is not None:
+        checks["rate_limit"] = rate_limit_ok
+
+    ok = all(checks.values())
+    status = "ok" if ok else "degraded"
+    code = 200 if ok else 503
+    return JSONResponse(status_code=code, content={"status": status, "checks": checks})
 
 
 @app.get("/login")
