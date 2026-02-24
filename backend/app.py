@@ -140,9 +140,27 @@ def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
 
 
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", None)
+    LOGGER.exception(
+        "unhandled_error",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+    )
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    request.state.request_id = request_id
     start = time.monotonic()
     response = None
     try:
