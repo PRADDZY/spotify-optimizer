@@ -44,3 +44,5 @@ NEXT_PUBLIC_API_BASE_URL=https://api.your-domain.com
 - `deploy/monitoring/grafana-dashboard.json`
 - `deploy/monitoring/prometheus.yml`
 - `deploy/systemd/prometheus.service`
+- `deploy/monitoring/grafana-provisioning/datasources/prometheus.yml`
+- `deploy/monitoring/grafana-provisioning/dashboards/dashboards.yml`
