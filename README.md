@@ -1,6 +1,6 @@
 ﻿# Spotify Mix Optimizer
 
-A local web app + API that reorders a Spotify playlist for smoother transitions using BPM, musical key (Camelot wheel), energy, loudness, and vibe features. The optimizer **creates a new playlist** named `<name>_optimized`. You can choose harmonic mixing vs. vibe continuity and optionally apply a warm-up -> peak -> cooldown flow curve.
+A local web app + API that reorders a Spotify playlist for smoother transitions using BPM, musical key (Camelot wheel), energy, loudness, and vibe features. The optimizer **creates a new playlist** named `<name>_optimized`. You can choose harmonic/vibe/balanced mix presets, flow profile (`peak`, `gentle`, `cooldown`), key-lock windowing, tempo-ramp weighting, and minimax smoothing passes.
 
 ## Project Layout
 
@@ -79,7 +79,12 @@ Optional flags:
 python optimizer.py optimize \
   --playlist "https://open.spotify.com/playlist/PLAYLIST_ID" \
   --mix-mode harmonic \
-  --flow-curve
+  --flow-curve \
+  --flow-profile peak \
+  --key-lock-window 4 \
+  --tempo-ramp-weight 0.12 \
+  --minimax-passes 3 \
+  --transition-log logs/transitions.jsonl
 ```
 
 ## Docker Compose (Local Prod-like)
@@ -97,6 +102,7 @@ Backend: `http://localhost:8000`
 
 - For production, set `ENV=production` and `SESSION_COOKIE_SECURE=true`, and provide a Redis URL to share sessions across instances.
 - Rate limiting and JSON request logs are enabled by default. Adjust `RATE_LIMIT_*` and `LOG_*` in `backend/.env`.
+- Set `TRANSITION_LOG_PATH` in `backend/.env` to append optimization transition diagnostics as JSONL.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
 - `/metrics` exposes Prometheus-compatible metrics.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
