@@ -305,11 +305,13 @@ def spotify_for_session(request: Request) -> spotipy.Spotify:
 
 
 @app.get("/health")
+@limiter.exempt
 def health():
     return {"status": "ok"}
 
 
 @app.get("/ready")
+@limiter.exempt
 def readiness():
     checks = {
         "sessions": STORE.ping(),
