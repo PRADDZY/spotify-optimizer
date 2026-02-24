@@ -7,13 +7,14 @@ import uuid
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from pythonjsonlogger import jsonlogger
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from redis import Redis
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -99,6 +100,17 @@ app = FastAPI(title="Spotify Mix Optimizer")
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "Request latency in seconds",
+    ["method", "path"],
+)
+
 frontend_urls = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
 frontend_urls = [url.strip() for url in frontend_urls if url.strip()]
 frontend_redirect = os.getenv("FRONTEND_REDIRECT_URL") or (
@@ -150,6 +162,8 @@ async def log_requests(request: Request, call_next):
                     user_id = session.get("user_id")
         except Exception:
             user_id = None
+        REQUEST_COUNT.labels(request.method, request.url.path, str(status)).inc()
+        REQUEST_LATENCY.labels(request.method, request.url.path).observe(duration_ms / 1000.0)
         LOGGER.info(
             "request",
             extra={
@@ -337,6 +351,12 @@ def readiness():
     status = "ok" if ok else "degraded"
     code = 200 if ok else 503
     return JSONResponse(status_code=code, content={"status": status, "checks": checks})
+
+
+@app.get("/metrics")
+@limiter.exempt
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/login")

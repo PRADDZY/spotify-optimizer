@@ -87,6 +87,7 @@ python optimizer.py optimize \
 - For production, set `ENV=production` and `SESSION_COOKIE_SECURE=true`, and provide a Redis URL to share sessions across instances.
 - Rate limiting and JSON request logs are enabled by default. Adjust `RATE_LIMIT_*` and `LOG_*` in `backend/.env`.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
+- `/metrics` exposes Prometheus-compatible metrics.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
 - Spotify's developer terms prohibit using Spotify content to train ML models; this tool is heuristic-based.
 
