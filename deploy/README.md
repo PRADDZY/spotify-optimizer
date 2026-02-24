@@ -42,3 +42,5 @@ NEXT_PUBLIC_API_BASE_URL=https://api.your-domain.com
 - `deploy/nginx/spotify-optimizer.conf`
 - `deploy/monitoring/prometheus-scrape.yml`
 - `deploy/monitoring/grafana-dashboard.json`
+- `deploy/monitoring/prometheus.yml`
+- `deploy/systemd/prometheus.service`

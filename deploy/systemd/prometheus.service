@@ -1,0 +1,13 @@
+﻿[Unit]
+Description=Prometheus Server
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/spotify-optimizer
+ExecStart=/usr/local/bin/prometheus --config.file=/opt/spotify-optimizer/deploy/monitoring/prometheus.yml --storage.tsdb.path=/var/lib/prometheus
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
