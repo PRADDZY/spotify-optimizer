@@ -48,6 +48,10 @@ sudo htpasswd -c /etc/nginx/.htpasswd metrics
 
 The template sets `client_max_body_size 2m` and conservative proxy buffer sizes for both API and frontend.
 
+## Uptime Check
+
+The frontend serves a static health file at `/.well-known/health`.
+
 ## Templates
 
 - `deploy/systemd/spotify-backend.service`
