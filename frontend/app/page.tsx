@@ -35,8 +35,16 @@ export default function HomePage() {
   const [playlist, setPlaylist] = useState("");
   const [mixName, setMixName] = useState("");
   const [isPublic, setIsPublic] = useState(false);
-  const [mixMode, setMixMode] = useState<"harmonic" | "vibe">("harmonic");
+  const [mixMode, setMixMode] = useState<"balanced" | "harmonic" | "vibe">(
+    "harmonic"
+  );
   const [flowCurve, setFlowCurve] = useState(true);
+  const [flowProfile, setFlowProfile] = useState<"peak" | "gentle" | "cooldown">(
+    "peak"
+  );
+  const [keyLockWindow, setKeyLockWindow] = useState(3);
+  const [tempoRampWeight, setTempoRampWeight] = useState(0.08);
+  const [minimaxPasses, setMinimaxPasses] = useState(2);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -73,6 +81,10 @@ export default function HomePage() {
     startTransition(async () => {
       setStatus("Optimizing transitions...");
       try {
+        const safeKeyLockWindow = Math.min(12, Math.max(1, Math.round(keyLockWindow || 3)));
+        const safeMinimaxPasses = Math.min(10, Math.max(0, Math.round(minimaxPasses || 2)));
+        const safeTempoRampWeight = Math.min(1, Math.max(0, tempoRampWeight || 0));
+
         const response = await fetch(`${apiBase}/optimize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -83,6 +95,10 @@ export default function HomePage() {
             public: isPublic,
             mix_mode: mixMode,
             flow_curve: flowCurve,
+            flow_profile: flowProfile,
+            key_lock_window: safeKeyLockWindow,
+            tempo_ramp_weight: safeTempoRampWeight,
+            minimax_passes: safeMinimaxPasses,
           }),
         });
 
@@ -153,7 +169,15 @@ export default function HomePage() {
           />
 
           <label>Mix focus</label>
-          <div className="segmented" role="group" aria-label="Mix focus">
+          <div className="segmented segmented-3" role="group" aria-label="Mix focus">
+            <button
+              type="button"
+              className={`seg ${mixMode === "balanced" ? "active" : ""}`}
+              onClick={() => setMixMode("balanced")}
+              aria-pressed={mixMode === "balanced"}
+            >
+              Balanced
+            </button>
             <button
               type="button"
               className={`seg ${mixMode === "harmonic" ? "active" : ""}`}
@@ -182,6 +206,75 @@ export default function HomePage() {
             <label htmlFor="flow-curve">
               Flow curve (warm-up -> peak -> cooldown)
             </label>
+          </div>
+
+          <div className="advanced-grid">
+            <div>
+              <label htmlFor="flow-profile">Flow profile</label>
+              <select
+                id="flow-profile"
+                value={flowProfile}
+                onChange={(event) =>
+                  setFlowProfile(event.target.value as "peak" | "gentle" | "cooldown")
+                }
+              >
+                <option value="peak">Peak</option>
+                <option value="gentle">Gentle</option>
+                <option value="cooldown">Cooldown</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="key-lock-window">Key lock window</label>
+              <input
+                id="key-lock-window"
+                type="number"
+                min={1}
+                max={12}
+                step={1}
+                value={keyLockWindow}
+                onChange={(event) =>
+                  setKeyLockWindow(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 3
+                  )
+                }
+              />
+            </div>
+
+            <div>
+              <label htmlFor="tempo-ramp-weight">Tempo ramp weight</label>
+              <input
+                id="tempo-ramp-weight"
+                type="range"
+                min={0}
+                max={0.25}
+                step={0.01}
+                value={tempoRampWeight}
+                onChange={(event) => setTempoRampWeight(Number(event.target.value))}
+              />
+              <div className="range-value">{tempoRampWeight.toFixed(2)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="minimax-passes">Minimax passes</label>
+              <input
+                id="minimax-passes"
+                type="number"
+                min={0}
+                max={10}
+                step={1}
+                value={minimaxPasses}
+                onChange={(event) =>
+                  setMinimaxPasses(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 2
+                  )
+                }
+              />
+            </div>
           </div>
 
           <div className="toggle">
@@ -245,8 +338,8 @@ export default function HomePage() {
               time), Camelot key adjacency, loudness matching, and subtle
               energy/valence/danceability texture nudges. Choose harmonic mixing
               or vibe continuity, and optionally apply a warm-up to peak to
-              cooldown energy curve. The best ordering is refined with greedy
-              search + local relocation passes.
+              cooldown energy curve. Advanced controls tune local key-locking,
+              tempo ramp shaping, and minimax passes that target rough edges.
             </p>
           </div>
           <div className="card">

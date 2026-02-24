@@ -140,7 +140,9 @@ label {
   color: rgba(255, 255, 255, 0.6);
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="number"],
+select {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(12, 15, 26, 0.6);
@@ -151,6 +153,16 @@ input[type="text"] {
   outline: none;
   margin-top: 10px;
   margin-bottom: 18px;
+}
+
+select {
+  appearance: none;
+}
+
+input[type="range"] {
+  width: 100%;
+  margin-top: 10px;
+  accent-color: var(--accent-1);
 }
 
 .toggle {
@@ -180,6 +192,10 @@ input[type="text"] {
   margin-bottom: 18px;
 }
 
+.segmented-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .seg {
   border-radius: 14px;
   padding: 12px 14px;
@@ -196,6 +212,23 @@ input[type="text"] {
   color: var(--ink-0);
   box-shadow: 0 10px 26px rgba(255, 123, 84, 0.2);
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.advanced-grid > div {
+  min-width: 0;
+}
+
+.range-value {
+  margin-top: 6px;
+  font-size: 0.84rem;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 button {
@@ -289,6 +322,10 @@ button:hover:not(:disabled) {
   }
 
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .advanced-grid {
     grid-template-columns: 1fr;
   }
 }
