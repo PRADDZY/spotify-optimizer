@@ -1,17 +1,24 @@
 import json
+import logging
 import os
 import secrets
 import time
+import uuid
 from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from pythonjsonlogger import jsonlogger
 from redis import Redis
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from .optimizer_core import (
     optimized_name,
@@ -31,6 +38,11 @@ if COOKIE_SECURE is None:
 COOKIE_SECURE = COOKIE_SECURE.lower() == "true"
 COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax").lower()
 COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.getenv("LOG_FORMAT", "json").lower()
+RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "10/minute")
+RATE_LIMIT_OPTIMIZE = os.getenv("RATE_LIMIT_OPTIMIZE", "5/minute")
+RATE_LIMIT_GLOBAL = os.getenv("RATE_LIMIT_GLOBAL", "60/minute")
 
 
 class WeightConfig(BaseModel):
@@ -62,7 +74,30 @@ class OptimizeResponse(BaseModel):
     roughest: list
 
 
+def setup_logging() -> logging.Logger:
+    logger = logging.getLogger("spotify_optimizer")
+    logger.setLevel(LOG_LEVEL)
+    handler = logging.StreamHandler()
+
+    if LOG_FORMAT == "json":
+        formatter = jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    else:
+        formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+
+    handler.setFormatter(formatter)
+    logger.handlers = [handler]
+    logger.propagate = False
+    return logger
+
+
+LOGGER = setup_logging()
+
+rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
+limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
+
 app = FastAPI(title="Spotify Mix Optimizer")
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 
 frontend_urls = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
 frontend_urls = [url.strip() for url in frontend_urls if url.strip()]
@@ -77,6 +112,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+
+@app.exception_handler(RateLimitExceeded)
+def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    start = time.monotonic()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        status = response.status_code if response else 500
+        if response is not None:
+            response.headers["X-Request-ID"] = request_id
+        LOGGER.info(
+            "request",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": status,
+                "duration_ms": duration_ms,
+            },
+        )
 
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -224,6 +289,7 @@ def health():
 
 
 @app.get("/login")
+@limiter.limit(RATE_LIMIT_LOGIN)
 def login(request: Request):
     sid = get_session_id(request) or secrets.token_urlsafe(16)
     state = secrets.token_urlsafe(16)
@@ -288,6 +354,7 @@ def me(request: Request):
 
 
 @app.post("/optimize", response_model=OptimizeResponse)
+@limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize(request: Request, payload: OptimizeRequest):
     if payload.missing not in {"append", "drop"}:
         raise HTTPException(status_code=400, detail="missing must be append or drop")
