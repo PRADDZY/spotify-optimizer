@@ -62,6 +62,20 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now redis-maintenance.timer
 ```
 
+## Redis Backup/Restore
+
+Create backups:
+
+```bash
+sudo bash deploy/monitoring/redis_backup.sh
+```
+
+Restore from a backup file:
+
+```bash
+sudo bash deploy/monitoring/redis_restore.sh /path/to/backup.rdb
+```
+
 ## Templates
 
 - `deploy/systemd/spotify-backend.service`
@@ -74,5 +88,7 @@ sudo systemctl enable --now redis-maintenance.timer
 - `deploy/systemd/redis-maintenance.service`
 - `deploy/systemd/redis-maintenance.timer`
 - `deploy/monitoring/redis_maintenance.sh`
+- `deploy/monitoring/redis_backup.sh`
+- `deploy/monitoring/redis_restore.sh`
 - `deploy/monitoring/grafana-provisioning/datasources/prometheus.yml`
 - `deploy/monitoring/grafana-provisioning/dashboards/dashboards.yml`
