@@ -82,6 +82,17 @@ python optimizer.py optimize \
   --flow-curve
 ```
 
+## Docker Compose (Local Prod-like)
+
+Create `backend/.env` (see `backend/.env.example`), then run:
+
+```bash
+docker compose up --build
+```
+
+Frontend: `http://localhost:3000`  
+Backend: `http://localhost:8000`
+
 ## Notes
 
 - For production, set `ENV=production` and `SESSION_COOKIE_SECURE=true`, and provide a Redis URL to share sessions across instances.
