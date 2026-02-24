@@ -45,6 +45,7 @@ LOG_FORMAT = os.getenv("LOG_FORMAT", "json").lower()
 RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "10/minute")
 RATE_LIMIT_OPTIMIZE = os.getenv("RATE_LIMIT_OPTIMIZE", "5/minute")
 RATE_LIMIT_GLOBAL = os.getenv("RATE_LIMIT_GLOBAL", "60/minute")
+TRANSITION_LOG_PATH = os.getenv("TRANSITION_LOG_PATH")
 
 
 class WeightConfig(BaseModel):
@@ -61,6 +62,10 @@ class OptimizeRequest(BaseModel):
     public: bool = False
     mix_mode: str = "balanced"
     flow_curve: bool = False
+    flow_profile: str = "peak"
+    key_lock_window: int = Field(3, ge=1, le=12)
+    tempo_ramp_weight: float = Field(0.08, ge=0.0, le=1.0)
+    minimax_passes: int = Field(2, ge=0, le=10)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -475,6 +480,8 @@ def optimize(request: Request, payload: OptimizeRequest):
         raise HTTPException(status_code=400, detail="missing must be append or drop")
     if payload.mix_mode not in {"balanced", "harmonic", "vibe"}:
         raise HTTPException(status_code=400, detail="mix_mode must be balanced, harmonic, or vibe")
+    if payload.flow_profile not in {"peak", "gentle", "cooldown"}:
+        raise HTTPException(status_code=400, detail="flow_profile must be peak, gentle, or cooldown")
 
     sp = spotify_for_session(request)
 
@@ -495,6 +502,11 @@ def optimize(request: Request, payload: OptimizeRequest):
         seed=42,
         mix_mode=payload.mix_mode,
         flow_curve=payload.flow_curve,
+        flow_profile=payload.flow_profile,
+        key_lock_window=payload.key_lock_window,
+        tempo_ramp_weight=payload.tempo_ramp_weight,
+        minimax_passes=payload.minimax_passes,
+        transition_log_path=TRANSITION_LOG_PATH,
     )
 
     base_name = payload.name or playlist_name or "Playlist"

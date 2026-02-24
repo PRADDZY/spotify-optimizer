@@ -34,6 +34,30 @@ def main() -> None:
         help="Mix focus preset",
     )
     opt.add_argument("--flow-curve", action="store_true", help="Apply warm-up -> peak -> cooldown arc")
+    opt.add_argument(
+        "--flow-profile",
+        choices=["peak", "gentle", "cooldown"],
+        default="peak",
+        help="Flow target shape for energy/tempo trajectory",
+    )
+    opt.add_argument("--key-lock-window", type=int, default=3, help="Local harmonic lock window (tracks)")
+    opt.add_argument(
+        "--tempo-ramp-weight",
+        type=float,
+        default=0.08,
+        help="Weight for matching a tempo progression curve",
+    )
+    opt.add_argument(
+        "--minimax-passes",
+        type=int,
+        default=2,
+        help="Passes that reduce worst transition spikes",
+    )
+    opt.add_argument(
+        "--transition-log",
+        default="",
+        help="Optional JSONL path to append transition diagnostics",
+    )
     opt.add_argument("--restarts", type=int, default=12, help="Number of random restarts")
     opt.add_argument("--two-opt-passes", type=int, default=2, help="2-opt improvement passes")
     opt.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -81,6 +105,11 @@ def main() -> None:
             seed=args.seed,
             mix_mode=args.mix_mode,
             flow_curve=args.flow_curve,
+            flow_profile=args.flow_profile,
+            key_lock_window=max(1, args.key_lock_window),
+            tempo_ramp_weight=max(0.0, args.tempo_ramp_weight),
+            minimax_passes=max(0, args.minimax_passes),
+            transition_log_path=args.transition_log or None,
         )
 
         print(f"Optimized transition score (lower is smoother): {cost:.3f}")
