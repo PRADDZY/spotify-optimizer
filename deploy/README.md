@@ -40,3 +40,4 @@ NEXT_PUBLIC_API_BASE_URL=https://api.your-domain.com
 - `deploy/systemd/spotify-backend.service`
 - `deploy/systemd/spotify-frontend.service`
 - `deploy/nginx/spotify-optimizer.conf`
+- `deploy/monitoring/prometheus-scrape.yml`

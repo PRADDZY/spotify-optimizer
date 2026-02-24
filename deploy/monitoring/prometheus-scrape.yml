@@ -1,0 +1,9 @@
+﻿# Prometheus scrape config snippet
+# Replace api.example.com with your API domain or internal load balancer.
+
+scrape_configs:
+  - job_name: "spotify-optimizer-api"
+    metrics_path: /metrics
+    scheme: https
+    static_configs:
+      - targets: ["api.example.com"]
