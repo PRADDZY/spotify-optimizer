@@ -87,3 +87,7 @@ python optimizer.py optimize \
 - For production, set `ENV=production` and `SESSION_COOKIE_SECURE=true`, and provide a Redis URL to share sessions across instances.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
 - Spotify's developer terms prohibit using Spotify content to train ML models; this tool is heuristic-based.
+
+## VPS Deploy
+
+See `deploy/README.md` for the VPS setup script and templates.

@@ -1,0 +1,14 @@
+﻿[Unit]
+Description=Spotify Optimizer Frontend
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/spotify-optimizer/frontend
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start -- --port 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

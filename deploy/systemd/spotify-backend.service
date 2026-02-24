@@ -1,0 +1,14 @@
+﻿[Unit]
+Description=Spotify Optimizer Backend
+After=network.target redis-server.service
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/spotify-optimizer/backend
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/spotify-optimizer/backend/.venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
