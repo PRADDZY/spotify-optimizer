@@ -35,6 +35,15 @@ NEXT_PUBLIC_API_BASE_URL=https://api.your-domain.com
 - Configures Nginx
 - Obtains TLS certs via certbot
 
+## Metrics Auth
+
+The Nginx template protects `/metrics` with basic auth. Create the credentials with:
+
+```bash
+sudo apt install -y apache2-utils
+sudo htpasswd -c /etc/nginx/.htpasswd metrics
+```
+
 ## Templates
 
 - `deploy/systemd/spotify-backend.service`
