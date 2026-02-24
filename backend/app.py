@@ -1,0 +1,338 @@
+import json
+import os
+import secrets
+import time
+from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
+import spotipy
+from spotipy.oauth2 import SpotifyOAuth
+from redis import Redis
+
+from .optimizer_core import (
+    optimized_name,
+    optimize_tracks,
+    parse_playlist_id,
+)
+
+load_dotenv()
+
+SESSION_COOKIE = "spotify_opt_sid"
+ENV = os.getenv("ENV", "development").lower()
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "604800"))
+STATE_TTL_SECONDS = int(os.getenv("STATE_TTL_SECONDS", "600"))
+COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE")
+if COOKIE_SECURE is None:
+    COOKIE_SECURE = "true" if ENV == "production" else "false"
+COOKIE_SECURE = COOKIE_SECURE.lower() == "true"
+COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax").lower()
+COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN")
+
+
+class WeightConfig(BaseModel):
+    bpm: float = 0.32
+    key: float = 0.28
+    energy: float = 0.12
+    valence: float = 0.06
+    dance: float = 0.06
+
+
+class OptimizeRequest(BaseModel):
+    playlist: str
+    name: Optional[str] = None
+    public: bool = False
+    mix_mode: str = "balanced"
+    flow_curve: bool = False
+    bpm_window: float = Field(0.08, ge=0.0, le=0.5)
+    restarts: int = Field(12, ge=1, le=100)
+    two_opt_passes: int = Field(2, ge=1, le=10)
+    missing: str = "append"
+    weights: Optional[WeightConfig] = None
+
+
+class OptimizeResponse(BaseModel):
+    playlist_id: str
+    playlist_name: str
+    playlist_url: str
+    transition_score: float
+    roughest: list
+
+
+app = FastAPI(title="Spotify Mix Optimizer")
+
+frontend_urls = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
+frontend_urls = [url.strip() for url in frontend_urls if url.strip()]
+frontend_redirect = os.getenv("FRONTEND_REDIRECT_URL") or (
+    frontend_urls[0] if frontend_urls else "http://localhost:3000"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=frontend_urls,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+client_id = os.getenv("SPOTIFY_CLIENT_ID")
+client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
+scopes = "playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public"
+
+if not client_id or not client_secret:
+    raise RuntimeError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET in environment.")
+
+
+def build_oauth() -> SpotifyOAuth:
+    return SpotifyOAuth(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+        scope=scopes,
+        open_browser=False,
+        cache_path=None,
+        show_dialog=True,
+    )
+
+
+class SessionStore:
+    def get_session(self, sid: str) -> Optional[dict]:
+        raise NotImplementedError
+
+    def set_session(self, sid: str, token_info: dict) -> None:
+        raise NotImplementedError
+
+    def delete_session(self, sid: str) -> None:
+        raise NotImplementedError
+
+    def set_state(self, state: str, sid: str) -> None:
+        raise NotImplementedError
+
+    def pop_state(self, state: str) -> Optional[str]:
+        raise NotImplementedError
+
+
+class InMemoryStore(SessionStore):
+    def __init__(self, ttl: int, state_ttl: int) -> None:
+        self.ttl = ttl
+        self.state_ttl = state_ttl
+        self.sessions: dict[str, tuple[dict, float]] = {}
+        self.states: dict[str, tuple[str, float]] = {}
+
+    def _set(self, store: dict, key: str, value, ttl: int) -> None:
+        store[key] = (value, time.time() + ttl)
+
+    def _get(self, store: dict, key: str):
+        item = store.get(key)
+        if not item:
+            return None
+        value, exp = item
+        if exp <= time.time():
+            store.pop(key, None)
+            return None
+        return value
+
+    def get_session(self, sid: str) -> Optional[dict]:
+        return self._get(self.sessions, sid)
+
+    def set_session(self, sid: str, token_info: dict) -> None:
+        self._set(self.sessions, sid, token_info, self.ttl)
+
+    def delete_session(self, sid: str) -> None:
+        self.sessions.pop(sid, None)
+
+    def set_state(self, state: str, sid: str) -> None:
+        self._set(self.states, state, sid, self.state_ttl)
+
+    def pop_state(self, state: str) -> Optional[str]:
+        value = self._get(self.states, state)
+        if value is not None:
+            self.states.pop(state, None)
+        return value
+
+
+class RedisStore(SessionStore):
+    def __init__(self, url: str, ttl: int, state_ttl: int) -> None:
+        self.redis = Redis.from_url(url, decode_responses=True)
+        self.ttl = ttl
+        self.state_ttl = state_ttl
+
+    def get_session(self, sid: str) -> Optional[dict]:
+        data = self.redis.get(f"session:{sid}")
+        if not data:
+            return None
+        return json.loads(data)
+
+    def set_session(self, sid: str, token_info: dict) -> None:
+        self.redis.setex(f"session:{sid}", self.ttl, json.dumps(token_info))
+
+    def delete_session(self, sid: str) -> None:
+        self.redis.delete(f"session:{sid}")
+
+    def set_state(self, state: str, sid: str) -> None:
+        self.redis.setex(f"state:{state}", self.state_ttl, sid)
+
+    def pop_state(self, state: str) -> Optional[str]:
+        key = f"state:{state}"
+        data = self.redis.get(key)
+        if data is not None:
+            self.redis.delete(key)
+        return data
+
+
+redis_url = os.getenv("REDIS_URL")
+if redis_url:
+    STORE: SessionStore = RedisStore(redis_url, SESSION_TTL_SECONDS, STATE_TTL_SECONDS)
+else:
+    STORE = InMemoryStore(SESSION_TTL_SECONDS, STATE_TTL_SECONDS)
+
+
+def get_session_id(request: Request) -> Optional[str]:
+    return request.cookies.get(SESSION_COOKIE)
+
+
+def get_token_for_session(request: Request) -> Dict:
+    sid = get_session_id(request)
+    if not sid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    token_info = STORE.get_session(sid)
+    if not token_info:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    oauth = build_oauth()
+    if oauth.is_token_expired(token_info):
+        if "refresh_token" not in token_info:
+            raise HTTPException(status_code=401, detail="Session expired")
+        token_info = oauth.refresh_access_token(token_info["refresh_token"])
+        STORE.set_session(sid, token_info)
+
+    return token_info
+
+
+def spotify_for_session(request: Request) -> spotipy.Spotify:
+    token_info = get_token_for_session(request)
+    return spotipy.Spotify(auth=token_info["access_token"], requests_timeout=10)
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/login")
+def login(request: Request):
+    sid = get_session_id(request) or secrets.token_urlsafe(16)
+    state = secrets.token_urlsafe(16)
+    STORE.set_state(state, sid)
+
+    oauth = build_oauth()
+    auth_url = oauth.get_authorize_url(state=state)
+
+    response = RedirectResponse(auth_url)
+    response.set_cookie(
+        SESSION_COOKIE,
+        sid,
+        httponly=True,
+        samesite=COOKIE_SAMESITE,
+        secure=COOKIE_SECURE,
+        domain=COOKIE_DOMAIN,
+    )
+    return response
+
+
+@app.get("/callback")
+def callback(request: Request, code: Optional[str] = None, state: Optional[str] = None):
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code/state")
+
+    sid = get_session_id(request)
+    expected_sid = STORE.pop_state(state)
+    if not sid or not expected_sid or sid != expected_sid:
+        raise HTTPException(status_code=400, detail="Invalid state")
+
+    oauth = build_oauth()
+    token_info = oauth.get_access_token(code)
+    STORE.set_session(sid, token_info)
+
+    response = RedirectResponse(frontend_redirect)
+    response.set_cookie(
+        SESSION_COOKIE,
+        sid,
+        httponly=True,
+        samesite=COOKIE_SAMESITE,
+        secure=COOKIE_SECURE,
+        domain=COOKIE_DOMAIN,
+    )
+    return response
+
+
+@app.get("/logout")
+def logout(request: Request):
+    sid = get_session_id(request)
+    if sid:
+        STORE.delete_session(sid)
+    response = RedirectResponse(frontend_redirect)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
+
+
+@app.get("/me")
+def me(request: Request):
+    sp = spotify_for_session(request)
+    profile = sp.current_user()
+    return {"id": profile.get("id"), "display_name": profile.get("display_name")}
+
+
+@app.post("/optimize", response_model=OptimizeResponse)
+def optimize(request: Request, payload: OptimizeRequest):
+    if payload.missing not in {"append", "drop"}:
+        raise HTTPException(status_code=400, detail="missing must be append or drop")
+    if payload.mix_mode not in {"balanced", "harmonic", "vibe"}:
+        raise HTTPException(status_code=400, detail="mix_mode must be balanced, harmonic, or vibe")
+
+    sp = spotify_for_session(request)
+
+    weights = payload.weights.model_dump() if payload.weights else {}
+
+    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
+    playlist_id = parse_playlist_id(payload.playlist)
+
+    playlist_name, ordered_tracks, cost, roughest = optimize_tracks(
+        sp=sp,
+        playlist_id=playlist_id,
+        cache_path=cache_path,
+        weights=weights,
+        bpm_window=payload.bpm_window,
+        restarts=payload.restarts,
+        two_opt_passes=payload.two_opt_passes,
+        missing=payload.missing,
+        seed=42,
+        mix_mode=payload.mix_mode,
+        flow_curve=payload.flow_curve,
+    )
+
+    base_name = payload.name or playlist_name or "Playlist"
+    new_name = optimized_name(base_name)
+
+    ordered_ids = [t.id for t in ordered_tracks]
+    playlist_id = sp.user_playlist_create(
+        sp.current_user()["id"],
+        name=new_name,
+        public=payload.public,
+        description="Optimized playlist order",
+    )["id"]
+
+    for i in range(0, len(ordered_ids), 100):
+        sp.playlist_add_items(playlist_id, ordered_ids[i : i + 100])
+
+    return {
+        "playlist_id": playlist_id,
+        "playlist_name": new_name,
+        "playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
+        "transition_score": round(cost, 4),
+        "roughest": roughest,
+    }
