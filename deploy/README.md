@@ -46,6 +46,8 @@ sudo apt install -y apache2-utils
 sudo htpasswd -c /etc/nginx/.htpasswd metrics
 ```
 
+For the single-node setup, `deploy/monitoring/prometheus.yml` scrapes `http://127.0.0.1:8000/metrics` directly.
+
 ## Nginx Limits
 
 The template sets `client_max_body_size 2m` and conservative proxy buffer sizes for both API and frontend.
