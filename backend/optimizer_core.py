@@ -1556,6 +1556,55 @@ def minimax_refine(
     return order
 
 
+def targeted_edge_repair(
+    order: List[int],
+    dist: List[List[float]],
+    objective_fn: Callable[[List[int]], float],
+    edge_count: int = 2,
+    neighborhood: int = 4,
+) -> List[int]:
+    n = len(order)
+    if n < 4:
+        return order
+
+    scored_edges = sorted(
+        ((dist[order[i]][order[i + 1]], i) for i in range(len(order) - 1)),
+        reverse=True,
+    )
+    rough_edges = [idx for _, idx in scored_edges[: max(1, edge_count)]]
+
+    best = list(order)
+    best_cost = objective_fn(best)
+
+    for edge_idx in rough_edges:
+        left = max(0, edge_idx - neighborhood)
+        right = min(n - 1, edge_idx + 1 + neighborhood)
+
+        for i in range(left, right):
+            for j in range(i + 2, right + 1):
+                candidate = list(best)
+                candidate[i : j + 1] = reversed(candidate[i : j + 1])
+                cand_cost = objective_fn(candidate)
+                if cand_cost < best_cost - 1e-9:
+                    best = candidate
+                    best_cost = cand_cost
+
+        for a in range(left, right + 1):
+            swap_left = max(0, a - 3)
+            swap_right = min(n - 1, a + 3)
+            for b in range(swap_left, swap_right + 1):
+                if a == b:
+                    continue
+                candidate = list(best)
+                candidate[a], candidate[b] = candidate[b], candidate[a]
+                cand_cost = objective_fn(candidate)
+                if cand_cost < best_cost - 1e-9:
+                    best = candidate
+                    best_cost = cand_cost
+
+    return best
+
+
 def pick_start_indices(dist: List[List[float]], tracks: List[Track], rng: random.Random, restarts: int) -> List[int]:
     n = len(dist)
     if n == 0:
@@ -1828,6 +1877,13 @@ def optimize_order(
             working = minimax_refine(working, dist, objective_fn=objective_eval, passes=minimax_passes)
             if not time_budget_exceeded():
                 working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_eval)
+                working = targeted_edge_repair(
+                    working,
+                    dist,
+                    objective_fn=objective_eval,
+                    edge_count=max(1, min(3, minimax_passes)),
+                    neighborhood=4,
+                )
 
         cost = objective_eval(working)
         if cost < best_cost:

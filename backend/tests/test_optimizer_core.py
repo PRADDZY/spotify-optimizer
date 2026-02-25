@@ -27,6 +27,7 @@ from backend.optimizer_core import (
     normalize_component_contributions,
     transition_reason_code,
     transition_reason,
+    targeted_edge_repair,
     variety_penalty,
     build_energy_curve,
     lookahead_penalty,
@@ -109,6 +110,25 @@ def test_minimax_refine_reduces_worst_transition():
     optimized = minimax_refine(order, dist, objective_fn=objective, passes=3)
     after = order_max_edge(optimized, dist)
 
+    assert after < before
+
+
+def test_targeted_edge_repair_reduces_total_transition_cost():
+    dist = [
+        [0.0, 0.2, 0.8, 0.9, 0.3],
+        [0.2, 0.0, 0.2, 0.9, 0.4],
+        [0.8, 0.2, 0.0, 1.2, 0.2],
+        [0.9, 0.9, 1.2, 0.0, 0.1],
+        [0.3, 0.4, 0.2, 0.1, 0.0],
+    ]
+    order = [0, 1, 2, 3, 4]
+    objective = lambda value: sum(dist[value[i]][value[i + 1]] for i in range(len(value) - 1))
+
+    before = objective(order)
+    improved = targeted_edge_repair(order, dist, objective_fn=objective, edge_count=2, neighborhood=3)
+    after = objective(improved)
+
+    assert sorted(improved) == [0, 1, 2, 3, 4]
     assert after < before
 
 
