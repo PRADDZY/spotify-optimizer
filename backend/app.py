@@ -25,6 +25,8 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from .optimizer_core import (
+    enrich_audio_features,
+    fetch_playlist_tracks,
     optimized_name,
     optimize_tracks,
     parse_playlist_id,
@@ -153,6 +155,11 @@ class SchedulePatchRequest(BaseModel):
     cron: Optional[str] = None
     enabled: Optional[bool] = None
     batch: Optional[BatchRequest] = None
+
+
+class AnchorSuggestRequest(BaseModel):
+    playlist: str
+    count: int = Field(3, ge=1, le=10)
 
 
 def setup_logging() -> logging.Logger:
@@ -552,6 +559,39 @@ def me(request: Request):
     sp = spotify_for_session(request)
     profile = sp.current_user()
     return {"id": profile.get("id"), "display_name": profile.get("display_name")}
+
+
+@app.post("/optimize/suggest-anchors")
+def suggest_anchors(request: Request, payload: AnchorSuggestRequest):
+    sp = spotify_for_session(request)
+    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
+    playlist_id = parse_playlist_id(payload.playlist)
+    _, tracks = fetch_playlist_tracks(sp, playlist_id)
+    if not tracks:
+        raise HTTPException(status_code=404, detail="no playable tracks found")
+    enrich_audio_features(sp, tracks, cache_path)
+
+    def opener_score(track):
+        features = track.features or {}
+        energy = float(features.get("energy") or 0.5)
+        tempo = float(features.get("tempo") or 120.0)
+        valence = float(features.get("valence") or 0.5)
+        return abs(tempo - 110.0) * 0.01 + energy * 0.6 + valence * 0.2
+
+    def closer_score(track):
+        features = track.features or {}
+        energy = float(features.get("energy") or 0.5)
+        valence = float(features.get("valence") or 0.5)
+        dance = float(features.get("danceability") or 0.5)
+        return -(energy * 0.5 + valence * 0.2 + dance * 0.3)
+
+    opener_candidates = sorted(tracks, key=opener_score)[: payload.count]
+    closer_candidates = sorted(tracks, key=closer_score)[: payload.count]
+    return {
+        "playlist_id": playlist_id,
+        "openers": [{"id": track.id, "name": track.name, "artists": track.artists} for track in opener_candidates],
+        "closers": [{"id": track.id, "name": track.name, "artists": track.artists} for track in closer_candidates],
+    }
 
 
 @app.post("/optimize", response_model=OptimizeResponse)
