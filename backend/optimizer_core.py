@@ -1672,6 +1672,14 @@ def anneal_refine(
     return best
 
 
+def resolve_anneal_steps(base_steps: int, track_count: int) -> int:
+    if base_steps <= 0 or track_count <= 0:
+        return 0
+    scale = math.sqrt(max(1.0, track_count) / 24.0)
+    scale = max(0.6, min(2.2, scale))
+    return max(10, int(round(base_steps * scale)))
+
+
 def dedupe_candidate_orders(candidate_orders: List[List[int]]) -> List[List[int]]:
     seen: set[Tuple[int, ...]] = set()
     unique: List[List[int]] = []
@@ -1762,6 +1770,7 @@ def optimize_order(
     best_order: Optional[List[int]] = None
     best_cost = math.inf
     objective_eval = memoize_order_objective(objective_fn)
+    effective_anneal_steps = resolve_anneal_steps(max(0, int(anneal_steps)), n)
     deadline: Optional[float] = None
     if max_solver_ms is not None and max_solver_ms > 0:
         deadline = time.perf_counter() + (float(max_solver_ms) / 1000.0)
@@ -1807,7 +1816,7 @@ def optimize_order(
                 working,
                 objective_fn=objective_eval,
                 rng=rng,
-                steps=max(0, anneal_steps),
+                steps=effective_anneal_steps,
                 temp_start=max(1e-6, anneal_temp_start),
                 temp_end=max(1e-6, anneal_temp_end),
             )

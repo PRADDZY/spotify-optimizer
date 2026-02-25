@@ -35,6 +35,7 @@ from backend.optimizer_core import (
     order_cost,
     order_max_edge,
     pick_start_indices,
+    resolve_anneal_steps,
     resolve_weights,
 )
 
@@ -680,3 +681,60 @@ def test_pick_start_indices_caps_restart_count_to_track_count():
     starts = pick_start_indices(dist, tracks, random.Random(42), restarts=12)
     assert len(starts) == 3
     assert sorted(starts) == [0, 1, 2]
+
+
+def test_resolve_anneal_steps_scales_with_track_count():
+    small = resolve_anneal_steps(base_steps=120, track_count=8)
+    medium = resolve_anneal_steps(base_steps=120, track_count=24)
+    large = resolve_anneal_steps(base_steps=120, track_count=120)
+
+    assert small < medium < large
+    assert small >= 10
+
+
+def test_optimize_order_uses_adaptive_anneal_steps(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.4, 0.6, 0.3],
+        [0.2, 0.0, 0.25, 0.45, 0.15],
+        [0.4, 0.25, 0.0, 0.2, 0.3],
+        [0.6, 0.45, 0.2, 0.0, 0.35],
+        [0.3, 0.15, 0.3, 0.35, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+        make_track("e-1", 0.6, 140.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 0)
+    calls: list[int] = []
+
+    def fake_anneal(order, objective_fn, rng, steps, temp_start, temp_end):
+        calls.append(steps)
+        return order
+
+    monkeypatch.setattr(core, "anneal_refine", fake_anneal)
+
+    core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=3,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=0,
+        solver_mode="hybrid",
+        beam_width=4,
+        anneal_steps=120,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+    )
+
+    expected = resolve_anneal_steps(base_steps=120, track_count=len(dist))
+    assert calls
+    assert all(value == expected for value in calls)
