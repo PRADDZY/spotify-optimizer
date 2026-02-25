@@ -66,6 +66,8 @@ class OptimizeRequest(BaseModel):
     key_lock_window: int = Field(3, ge=1, le=12)
     tempo_ramp_weight: float = Field(0.08, ge=0.0, le=1.0)
     minimax_passes: int = Field(2, ge=0, le=10)
+    locked_first_track_id: Optional[str] = None
+    locked_last_track_id: Optional[str] = None
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -506,6 +508,8 @@ def optimize(request: Request, payload: OptimizeRequest):
         key_lock_window=payload.key_lock_window,
         tempo_ramp_weight=payload.tempo_ramp_weight,
         minimax_passes=payload.minimax_passes,
+        locked_first_track_id=payload.locked_first_track_id,
+        locked_last_track_id=payload.locked_last_track_id,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 

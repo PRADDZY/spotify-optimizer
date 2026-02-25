@@ -3,6 +3,7 @@ import json
 from backend.optimizer_core import (
     OptimizationConfig,
     Track,
+    apply_fixed_endpoints,
     append_transition_log,
     build_energy_curve,
     minimax_refine,
@@ -109,3 +110,21 @@ def test_append_transition_log_writes_jsonl(tmp_path):
     assert len(payload["transitions"]) == 1
     assert payload["transitions"][0]["from_track"] == "t1"
     assert payload["transitions"][0]["to_track"] == "t2"
+
+
+def test_apply_fixed_endpoints_keeps_requested_start_and_end():
+    tracks = [
+        make_track("a", 0.2, 100.0),
+        make_track("b", 0.4, 110.0),
+        make_track("c", 0.6, 120.0),
+        make_track("d", 0.8, 130.0),
+    ]
+    order = [1, 2, 0, 3]
+    fixed = apply_fixed_endpoints(
+        order,
+        tracks,
+        locked_first_track_id="a",
+        locked_last_track_id="c",
+    )
+    assert tracks[fixed[0]].id == "a"
+    assert tracks[fixed[-1]].id == "c"

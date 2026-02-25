@@ -1083,6 +1083,31 @@ def summarize_transitions(tracks: List[Track], dist: List[List[float]], order: L
     return scored[:limit]
 
 
+def apply_fixed_endpoints(
+    order: List[int],
+    tracks: List[Track],
+    locked_first_track_id: Optional[str],
+    locked_last_track_id: Optional[str],
+) -> List[int]:
+    if not order:
+        return order
+
+    by_id = {tracks[idx].id: idx for idx in order}
+    fixed_order = list(order)
+
+    first_idx = by_id.get(locked_first_track_id) if locked_first_track_id else None
+    if first_idx is not None and first_idx in fixed_order:
+        fixed_order.remove(first_idx)
+        fixed_order.insert(0, first_idx)
+
+    last_idx = by_id.get(locked_last_track_id) if locked_last_track_id else None
+    if last_idx is not None and last_idx in fixed_order:
+        fixed_order.remove(last_idx)
+        fixed_order.append(last_idx)
+
+    return fixed_order
+
+
 def transition_record(from_track: Track, to_track: Track, score: float, index: int) -> Dict:
     from_features = from_track.features or {}
     to_features = to_track.features or {}
@@ -1181,6 +1206,8 @@ def optimize_tracks(
     key_lock_window: int = 3,
     tempo_ramp_weight: float = 0.08,
     minimax_passes: int = 2,
+    locked_first_track_id: Optional[str] = None,
+    locked_last_track_id: Optional[str] = None,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1253,6 +1280,14 @@ def optimize_tracks(
         energy_targets=energy_targets,
         minimax_passes=config.minimax_passes,
     )
+
+    order = apply_fixed_endpoints(
+        order,
+        with_features,
+        locked_first_track_id=locked_first_track_id,
+        locked_last_track_id=locked_last_track_id,
+    )
+    cost = objective_fn(order)
 
     ordered_tracks = [with_features[i] for i in order]
     if missing == "append" and missing_tracks:
