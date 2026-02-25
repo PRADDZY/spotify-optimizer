@@ -17,8 +17,12 @@ services:
       SESSION_COOKIE_SECURE: "false"
       REDIS_URL: redis://redis:6379/0
       RATE_LIMIT_REDIS_URL: redis://redis:6379/1
+      STATE_DB_PATH: /app/data/state.db
     ports:
       - "8000:8000"
+    volumes:
+      - backend_state:/app/data
+      - backend_cache:/app/cache
     depends_on:
       - redis
 
@@ -33,3 +37,7 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+
+volumes:
+  backend_state:
+  backend_cache:

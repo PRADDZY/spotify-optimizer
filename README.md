@@ -98,6 +98,8 @@ docker compose up --build
 Frontend: `http://localhost:3000`  
 Backend: `http://localhost:8000`
 
+`docker-compose.yml` now persists backend runtime state and cache using named volumes (`backend_state`, `backend_cache`).
+
 ## Notes
 
 - For production, set `ENV=production` and `SESSION_COOKIE_SECURE=true`, and provide a Redis URL to share sessions across instances.
