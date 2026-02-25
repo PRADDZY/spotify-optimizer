@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg_file="${1:-}"
+if [[ -z "$msg_file" || ! -f "$msg_file" ]]; then
+  echo "commit-msg hook: missing commit message file" >&2
+  exit 1
+fi
+
+subject="$(sed -n '1p' "$msg_file" | tr -d '\r')"
+
+if [[ -z "$subject" ]]; then
+  echo "commit-msg hook: empty commit subject is not allowed" >&2
+  exit 1
+fi
+
+if [[ "$subject" =~ ^(Merge|Revert)\b ]]; then
+  exit 0
+fi
+
+length="${#subject}"
+if (( length < 12 )); then
+  echo "commit-msg hook: subject is too short (min 12 chars)" >&2
+  exit 1
+fi
+
+if (( length > 80 )); then
+  echo "commit-msg hook: subject is too long (max 80 chars)" >&2
+  exit 1
+fi
+
+if [[ "$subject" != *" "* ]]; then
+  echo "commit-msg hook: subject should include a verb and context" >&2
+  exit 1
+fi
+
+if [[ "$subject" == *"." ]]; then
+  echo "commit-msg hook: subject must not end with a period" >&2
+  exit 1
+fi
+
