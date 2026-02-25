@@ -121,6 +121,19 @@ class PresetPatchRequest(BaseModel):
     schema_version: Optional[int] = None
 
 
+class SnapshotCreateRequest(BaseModel):
+    source_playlist_id: str
+    source_playlist_name: str
+    source_track_ids: list[str]
+    optimized_track_ids: Optional[list[str]] = None
+    note: Optional[str] = None
+
+
+class RollbackRequest(BaseModel):
+    public: bool = False
+    name: Optional[str] = None
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -141,6 +154,7 @@ LOGGER = setup_logging()
 RUN_HISTORY: dict[str, dict] = {}
 COMPARISON_HISTORY: dict[str, dict] = {}
 PRESET_STORE: dict[str, dict] = {}
+SNAPSHOT_STORE: dict[str, dict] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -534,6 +548,7 @@ def optimize(request: Request, payload: OptimizeRequest):
 
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     source_playlist_id = parse_playlist_id(payload.playlist)
+    source_track_ids = fetch_playlist_track_ids(sp, source_playlist_id)
 
     playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
         sp=sp,
@@ -570,15 +585,25 @@ def optimize(request: Request, payload: OptimizeRequest):
     new_name = optimized_name(base_name)
 
     ordered_ids = [t.id for t in ordered_tracks]
-    playlist_id = sp.user_playlist_create(
-        sp.current_user()["id"],
+    playlist_id = create_playlist_with_items(
+        sp=sp,
         name=new_name,
         public=payload.public,
+        track_ids=ordered_ids,
         description="Optimized playlist order",
-    )["id"]
+    )
 
-    for i in range(0, len(ordered_ids), 100):
-        sp.playlist_add_items(playlist_id, ordered_ids[i : i + 100])
+    snapshot_id = uuid.uuid4().hex
+    SNAPSHOT_STORE[snapshot_id] = {
+        "owner_id": current_owner_id(request),
+        "source_playlist_id": source_playlist_id,
+        "source_playlist_name": playlist_name,
+        "source_track_ids": source_track_ids,
+        "optimized_track_ids": ordered_ids,
+        "output_playlist_id": playlist_id,
+        "note": "auto_snapshot",
+        "created_at": time.time(),
+    }
 
     run_id = uuid.uuid4().hex
     RUN_HISTORY[run_id] = {
@@ -590,6 +615,7 @@ def optimize(request: Request, payload: OptimizeRequest):
         "transitions": explainability,
         "request": payload.model_dump(),
         "public": payload.public,
+        "snapshot_id": snapshot_id,
         "created_at": time.time(),
     }
 
@@ -679,6 +705,44 @@ def current_owner_id(request: Request) -> str:
     return "anonymous"
 
 
+def fetch_playlist_track_ids(sp: spotipy.Spotify, playlist_id: str) -> list[str]:
+    results = sp.playlist_items(
+        playlist_id,
+        fields="items(track(id)),next",
+        additional_types=["track"],
+        limit=100,
+    )
+    track_ids: list[str] = []
+    while results:
+        for item in results.get("items", []):
+            track = item.get("track")
+            if track and track.get("id"):
+                track_ids.append(track["id"])
+        if results.get("next"):
+            results = sp.next(results)
+        else:
+            break
+    return track_ids
+
+
+def create_playlist_with_items(
+    sp: spotipy.Spotify,
+    name: str,
+    public: bool,
+    track_ids: list[str],
+    description: str,
+) -> str:
+    playlist_id = sp.user_playlist_create(
+        sp.current_user()["id"],
+        name=name,
+        public=public,
+        description=description,
+    )["id"]
+    for i in range(0, len(track_ids), 100):
+        sp.playlist_add_items(playlist_id, track_ids[i : i + 100])
+    return playlist_id
+
+
 @app.post("/presets")
 def create_preset(request: Request, payload: PresetRequest):
     preset_id = uuid.uuid4().hex
@@ -734,6 +798,62 @@ def delete_preset(request: Request, preset_id: str):
         raise HTTPException(status_code=403, detail="forbidden")
     PRESET_STORE.pop(preset_id, None)
     return {"deleted": True, "preset_id": preset_id}
+
+
+@app.post("/snapshots")
+def create_snapshot(request: Request, payload: SnapshotCreateRequest):
+    snapshot_id = uuid.uuid4().hex
+    SNAPSHOT_STORE[snapshot_id] = {
+        "owner_id": current_owner_id(request),
+        "source_playlist_id": parse_playlist_id(payload.source_playlist_id),
+        "source_playlist_name": payload.source_playlist_name,
+        "source_track_ids": payload.source_track_ids,
+        "optimized_track_ids": payload.optimized_track_ids or [],
+        "output_playlist_id": None,
+        "note": payload.note,
+        "created_at": time.time(),
+    }
+    return {"snapshot_id": snapshot_id, **SNAPSHOT_STORE[snapshot_id]}
+
+
+@app.get("/snapshots")
+def list_snapshots(request: Request):
+    owner_id = current_owner_id(request)
+    rows = []
+    for snapshot_id, value in SNAPSHOT_STORE.items():
+        if value.get("owner_id") != owner_id:
+            continue
+        rows.append({"snapshot_id": snapshot_id, **value})
+    rows.sort(key=lambda item: item.get("created_at", 0), reverse=True)
+    return {"items": rows}
+
+
+@app.post("/snapshots/{snapshot_id}/rollback")
+def rollback_snapshot(request: Request, snapshot_id: str, payload: RollbackRequest):
+    snapshot = SNAPSHOT_STORE.get(snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    if snapshot.get("owner_id") != current_owner_id(request):
+        raise HTTPException(status_code=403, detail="forbidden")
+    source_track_ids = snapshot.get("source_track_ids") or []
+    if not source_track_ids:
+        raise HTTPException(status_code=400, detail="snapshot has no source tracks")
+    sp = spotify_for_session(request)
+    base_name = payload.name or snapshot.get("source_playlist_name") or "Playlist"
+    rollback_name = optimized_name(f"{base_name}_rollback")
+    rollback_playlist_id = create_playlist_with_items(
+        sp=sp,
+        name=rollback_name,
+        public=payload.public,
+        track_ids=source_track_ids,
+        description=f"Rollback from snapshot {snapshot_id}",
+    )
+    return {
+        "snapshot_id": snapshot_id,
+        "playlist_id": rollback_playlist_id,
+        "playlist_name": rollback_name,
+        "playlist_url": f"https://open.spotify.com/playlist/{rollback_playlist_id}",
+    }
 
 
 @app.post("/optimize/{run_id}/quick-fix", response_model=OptimizeResponse)
@@ -792,14 +912,13 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
     base_name = replay.name or playlist_name or "Playlist"
     quick_name = optimized_name(f"{base_name}_quickfix")
     ordered_ids = [track.id for track in ordered_tracks]
-    new_playlist_id = sp.user_playlist_create(
-        sp.current_user()["id"],
+    new_playlist_id = create_playlist_with_items(
+        sp=sp,
         name=quick_name,
         public=replay.public,
+        track_ids=ordered_ids,
         description=f"Quick-fix optimized from run {run_id}",
-    )["id"]
-    for i in range(0, len(ordered_ids), 100):
-        sp.playlist_add_items(new_playlist_id, ordered_ids[i : i + 100])
+    )
 
     new_run_id = uuid.uuid4().hex
     RUN_HISTORY[new_run_id] = {
