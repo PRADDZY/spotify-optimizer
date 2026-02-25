@@ -1992,6 +1992,79 @@ def cron_matches_now(cron_expr: str, now: datetime) -> bool:
     )
 
 
+def serialize_mood_curve_points(points: Optional[list[MoodPoint]]) -> list[dict]:
+    rows: list[dict] = []
+    for point in points or []:
+        if hasattr(point, "model_dump"):
+            rows.append(point.model_dump())
+        elif isinstance(point, dict):
+            rows.append(point)
+    return rows
+
+
+def run_optimize_tracks_for_payload(
+    sp: spotipy.Spotify,
+    payload: OptimizeRequest,
+    *,
+    seed: int,
+    feedback_offsets: dict[str, float],
+    model_payload: dict[str, object],
+    cache_path: str,
+    source_playlist_id: Optional[str] = None,
+) -> tuple[str, str, list, float, list[dict], list[dict]]:
+    source_playlist_id = source_playlist_id or parse_playlist_id(payload.playlist)
+    weights = payload.weights.model_dump() if payload.weights else {}
+
+    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+        sp=sp,
+        playlist_id=source_playlist_id,
+        cache_path=cache_path,
+        weights=weights,
+        bpm_window=payload.bpm_window,
+        restarts=payload.restarts,
+        two_opt_passes=payload.two_opt_passes,
+        missing=payload.missing,
+        seed=seed,
+        mix_mode=payload.mix_mode,
+        flow_curve=payload.flow_curve,
+        flow_profile=payload.flow_profile,
+        key_lock_window=payload.key_lock_window,
+        tempo_ramp_weight=payload.tempo_ramp_weight,
+        minimax_passes=payload.minimax_passes,
+        locked_first_track_id=payload.locked_first_track_id,
+        locked_last_track_id=payload.locked_last_track_id,
+        locked_blocks=payload.locked_blocks,
+        artist_gap=payload.artist_gap,
+        album_gap=payload.album_gap,
+        explicit_mode=payload.explicit_mode,
+        duration_target_sec=payload.duration_target_sec,
+        duration_tolerance_sec=payload.duration_tolerance_sec,
+        genre_cluster_strength=payload.genre_cluster_strength,
+        mood_curve_points=serialize_mood_curve_points(payload.mood_curve_points),
+        bpm_guardrails=payload.bpm_guardrails or [],
+        harmonic_strict=payload.harmonic_strict,
+        feedback_offsets=feedback_offsets,
+        smoothness_weight=payload.smoothness_weight,
+        variety_weight=payload.variety_weight,
+        max_bpm_jump=payload.max_bpm_jump,
+        min_key_compatibility=payload.min_key_compatibility,
+        no_repeat_artist_within=payload.no_repeat_artist_within,
+        solver_mode=payload.solver_mode,
+        beam_width=payload.beam_width,
+        anneal_steps=payload.anneal_steps,
+        anneal_temp_start=payload.anneal_temp_start,
+        anneal_temp_end=payload.anneal_temp_end,
+        lookahead_horizon=payload.lookahead_horizon,
+        lookahead_decay=payload.lookahead_decay,
+        model_weights=model_payload.get("weights"),
+        model_bias=float(model_payload.get("bias") or 0.0),
+        model_alpha=float(model_payload.get("alpha") or 0.0),
+        model_version=model_payload.get("version"),
+        transition_log_path=TRANSITION_LOG_PATH,
+    )
+    return source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability
+
+
 def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchRequest, batch_source: str) -> tuple[str, dict]:
     batch_id = uuid.uuid4().hex
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
@@ -2007,55 +2080,13 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
             cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
             cfg_payload = apply_builtin_preset(cfg_payload)
             validate_optimize_payload(cfg_payload)
-            weights = cfg_payload.weights.model_dump() if cfg_payload.weights else {}
-            source_playlist_id = parse_playlist_id(cfg_payload.playlist)
-
-            playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+            source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
                 sp=sp,
-                playlist_id=source_playlist_id,
-                cache_path=cache_path,
-                weights=weights,
-                bpm_window=cfg_payload.bpm_window,
-                restarts=cfg_payload.restarts,
-                two_opt_passes=cfg_payload.two_opt_passes,
-                missing=cfg_payload.missing,
+                payload=cfg_payload,
                 seed=44 + index,
-                mix_mode=cfg_payload.mix_mode,
-                flow_curve=cfg_payload.flow_curve,
-                flow_profile=cfg_payload.flow_profile,
-                key_lock_window=cfg_payload.key_lock_window,
-                tempo_ramp_weight=cfg_payload.tempo_ramp_weight,
-                minimax_passes=cfg_payload.minimax_passes,
-                locked_first_track_id=cfg_payload.locked_first_track_id,
-                locked_last_track_id=cfg_payload.locked_last_track_id,
-                locked_blocks=cfg_payload.locked_blocks,
-                artist_gap=cfg_payload.artist_gap,
-                album_gap=cfg_payload.album_gap,
-                explicit_mode=cfg_payload.explicit_mode,
-                duration_target_sec=cfg_payload.duration_target_sec,
-                duration_tolerance_sec=cfg_payload.duration_tolerance_sec,
-                genre_cluster_strength=cfg_payload.genre_cluster_strength,
-                mood_curve_points=[point.model_dump() for point in cfg_payload.mood_curve_points or []],
-                bpm_guardrails=cfg_payload.bpm_guardrails or [],
-                harmonic_strict=cfg_payload.harmonic_strict,
                 feedback_offsets=feedback_offsets,
-                smoothness_weight=cfg_payload.smoothness_weight,
-                variety_weight=cfg_payload.variety_weight,
-                max_bpm_jump=cfg_payload.max_bpm_jump,
-                min_key_compatibility=cfg_payload.min_key_compatibility,
-                no_repeat_artist_within=cfg_payload.no_repeat_artist_within,
-                solver_mode=cfg_payload.solver_mode,
-                beam_width=cfg_payload.beam_width,
-                anneal_steps=cfg_payload.anneal_steps,
-                anneal_temp_start=cfg_payload.anneal_temp_start,
-                anneal_temp_end=cfg_payload.anneal_temp_end,
-                lookahead_horizon=cfg_payload.lookahead_horizon,
-                lookahead_decay=cfg_payload.lookahead_decay,
-                model_weights=model_payload.get("weights"),
-                model_bias=float(model_payload.get("bias") or 0.0),
-                model_alpha=float(model_payload.get("alpha") or 0.0),
-                model_version=model_payload.get("version"),
-                transition_log_path=TRANSITION_LOG_PATH,
+                model_payload=model_payload,
+                cache_path=cache_path,
             )
 
             base_name = cfg_payload.name or playlist_name or f"Batch {index+1}"
@@ -2148,7 +2179,6 @@ def run_single_optimization(
     run_id = run_id or uuid.uuid4().hex
     emit_run_event(run_id, "start", 2, "Starting optimization")
 
-    weights = payload.weights.model_dump() if payload.weights else {}
     feedback_offsets = owner_feedback_offsets(owner_id)
     model_payload = active_model_payload()
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
@@ -2156,52 +2186,14 @@ def run_single_optimization(
     source_track_ids = fetch_playlist_track_ids(sp, source_playlist_id)
     emit_run_event(run_id, "ingest", 15, "Fetched playlist tracks", {"count": len(source_track_ids)})
 
-    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+    source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
         sp=sp,
-        playlist_id=source_playlist_id,
-        cache_path=cache_path,
-        weights=weights,
-        bpm_window=payload.bpm_window,
-        restarts=payload.restarts,
-        two_opt_passes=payload.two_opt_passes,
-        missing=payload.missing,
+        payload=payload,
         seed=seed,
-        mix_mode=payload.mix_mode,
-        flow_curve=payload.flow_curve,
-        flow_profile=payload.flow_profile,
-        key_lock_window=payload.key_lock_window,
-        tempo_ramp_weight=payload.tempo_ramp_weight,
-        minimax_passes=payload.minimax_passes,
-        locked_first_track_id=payload.locked_first_track_id,
-        locked_last_track_id=payload.locked_last_track_id,
-        locked_blocks=payload.locked_blocks,
-        artist_gap=payload.artist_gap,
-        album_gap=payload.album_gap,
-        explicit_mode=payload.explicit_mode,
-        duration_target_sec=payload.duration_target_sec,
-        duration_tolerance_sec=payload.duration_tolerance_sec,
-        genre_cluster_strength=payload.genre_cluster_strength,
-        mood_curve_points=[point.model_dump() for point in payload.mood_curve_points or []],
-        bpm_guardrails=payload.bpm_guardrails or [],
-        harmonic_strict=payload.harmonic_strict,
         feedback_offsets=feedback_offsets,
-        smoothness_weight=payload.smoothness_weight,
-        variety_weight=payload.variety_weight,
-        max_bpm_jump=payload.max_bpm_jump,
-        min_key_compatibility=payload.min_key_compatibility,
-        no_repeat_artist_within=payload.no_repeat_artist_within,
-        solver_mode=payload.solver_mode,
-        beam_width=payload.beam_width,
-        anneal_steps=payload.anneal_steps,
-        anneal_temp_start=payload.anneal_temp_start,
-        anneal_temp_end=payload.anneal_temp_end,
-        lookahead_horizon=payload.lookahead_horizon,
-        lookahead_decay=payload.lookahead_decay,
-        model_weights=model_payload.get("weights"),
-        model_bias=float(model_payload.get("bias") or 0.0),
-        model_alpha=float(model_payload.get("alpha") or 0.0),
-        model_version=model_payload.get("version"),
-        transition_log_path=TRANSITION_LOG_PATH,
+        model_payload=model_payload,
+        cache_path=cache_path,
+        source_playlist_id=source_playlist_id,
     )
     emit_run_event(run_id, "search", 65, "Optimization complete", {"transitions": len(explainability)})
 
@@ -2571,56 +2563,14 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
     owner_id = current_owner_id(request)
     feedback_offsets = owner_feedback_offsets(owner_id)
     model_payload = active_model_payload()
-    weights = replay.weights.model_dump() if replay.weights else {}
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
-    source_playlist_id = parse_playlist_id(replay.playlist)
-
-    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+    source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
         sp=sp,
-        playlist_id=source_playlist_id,
-        cache_path=cache_path,
-        weights=weights,
-        bpm_window=replay.bpm_window,
-        restarts=replay.restarts,
-        two_opt_passes=replay.two_opt_passes,
-        missing=replay.missing,
+        payload=replay,
         seed=43,
-        mix_mode=replay.mix_mode,
-        flow_curve=replay.flow_curve,
-        flow_profile=replay.flow_profile,
-        key_lock_window=replay.key_lock_window,
-        tempo_ramp_weight=replay.tempo_ramp_weight,
-        minimax_passes=replay.minimax_passes,
-        locked_first_track_id=replay.locked_first_track_id,
-        locked_last_track_id=replay.locked_last_track_id,
-        locked_blocks=replay.locked_blocks,
-        artist_gap=replay.artist_gap,
-        album_gap=replay.album_gap,
-        explicit_mode=replay.explicit_mode,
-        duration_target_sec=replay.duration_target_sec,
-        duration_tolerance_sec=replay.duration_tolerance_sec,
-        genre_cluster_strength=replay.genre_cluster_strength,
-        mood_curve_points=[point.model_dump() for point in replay.mood_curve_points or []],
-        bpm_guardrails=replay.bpm_guardrails or [],
-        harmonic_strict=replay.harmonic_strict,
         feedback_offsets=feedback_offsets,
-        smoothness_weight=replay.smoothness_weight,
-        variety_weight=replay.variety_weight,
-        max_bpm_jump=replay.max_bpm_jump,
-        min_key_compatibility=replay.min_key_compatibility,
-        no_repeat_artist_within=replay.no_repeat_artist_within,
-        solver_mode=replay.solver_mode,
-        beam_width=replay.beam_width,
-        anneal_steps=replay.anneal_steps,
-        anneal_temp_start=replay.anneal_temp_start,
-        anneal_temp_end=replay.anneal_temp_end,
-        lookahead_horizon=replay.lookahead_horizon,
-        lookahead_decay=replay.lookahead_decay,
-        model_weights=model_payload.get("weights"),
-        model_bias=float(model_payload.get("bias") or 0.0),
-        model_alpha=float(model_payload.get("alpha") or 0.0),
-        model_version=model_payload.get("version"),
-        transition_log_path=TRANSITION_LOG_PATH,
+        model_payload=model_payload,
+        cache_path=cache_path,
     )
 
     base_name = replay.name or playlist_name or "Playlist"
