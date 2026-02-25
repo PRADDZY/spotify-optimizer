@@ -35,6 +35,8 @@ NEXT_PUBLIC_API_BASE_URL=https://api.your-domain.com
 - Configures Nginx
 - Obtains TLS certs via certbot
 
+Systemd templates include baseline hardening (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem`, file descriptor limits).
+
 ## Metrics Auth
 
 The Nginx template protects `/metrics` with basic auth. Create the credentials with:

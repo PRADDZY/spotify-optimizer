@@ -6,9 +6,17 @@ After=network.target
 User=www-data
 WorkingDirectory=/opt/spotify-optimizer/frontend
 Environment=NODE_ENV=production
+EnvironmentFile=-/opt/spotify-optimizer/frontend/.env.local
 ExecStart=/usr/bin/npm start -- --port 3000
 Restart=always
 RestartSec=5
+UMask=027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/spotify-optimizer/frontend
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
