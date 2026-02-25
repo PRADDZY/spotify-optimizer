@@ -104,6 +104,11 @@ class OptimizeRequest(BaseModel):
     max_bpm_jump: Optional[float] = Field(None, ge=0.0, le=240.0)
     min_key_compatibility: Optional[float] = Field(None, ge=0.0, le=1.0)
     no_repeat_artist_within: int = Field(0, ge=0, le=20)
+    solver_mode: str = "hybrid"
+    beam_width: int = Field(8, ge=1, le=24)
+    anneal_steps: int = Field(140, ge=0, le=1500)
+    anneal_temp_start: float = Field(0.08, ge=0.0001, le=2.0)
+    anneal_temp_end: float = Field(0.004, ge=0.0001, le=2.0)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -764,6 +769,24 @@ def apply_builtin_preset(payload: OptimizeRequest) -> OptimizeRequest:
     return OptimizeRequest(**merged)
 
 
+def validate_optimize_payload(payload: OptimizeRequest) -> None:
+    if payload.missing not in {"append", "drop"}:
+        raise HTTPException(status_code=400, detail="missing must be append or drop")
+    if payload.mix_mode not in {"balanced", "harmonic", "vibe"}:
+        raise HTTPException(status_code=400, detail="mix_mode must be balanced, harmonic, or vibe")
+    if payload.flow_profile not in {"peak", "gentle", "cooldown"}:
+        raise HTTPException(status_code=400, detail="flow_profile must be peak, gentle, or cooldown")
+    if payload.explicit_mode not in {"allow", "prefer_clean", "clean_only"}:
+        raise HTTPException(status_code=400, detail="explicit_mode must be allow, prefer_clean, or clean_only")
+    if payload.solver_mode not in {"classic", "hybrid"}:
+        raise HTTPException(status_code=400, detail="solver_mode must be classic or hybrid")
+    if payload.anneal_temp_end > payload.anneal_temp_start:
+        raise HTTPException(
+            status_code=400,
+            detail="anneal_temp_end must be less than or equal to anneal_temp_start",
+        )
+
+
 @app.get("/presets/builtin")
 def list_builtin_presets():
     return {
@@ -778,14 +801,7 @@ def list_builtin_presets():
 @limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize(request: Request, payload: OptimizeRequest):
     payload = apply_builtin_preset(payload)
-    if payload.missing not in {"append", "drop"}:
-        raise HTTPException(status_code=400, detail="missing must be append or drop")
-    if payload.mix_mode not in {"balanced", "harmonic", "vibe"}:
-        raise HTTPException(status_code=400, detail="mix_mode must be balanced, harmonic, or vibe")
-    if payload.flow_profile not in {"peak", "gentle", "cooldown"}:
-        raise HTTPException(status_code=400, detail="flow_profile must be peak, gentle, or cooldown")
-    if payload.explicit_mode not in {"allow", "prefer_clean", "clean_only"}:
-        raise HTTPException(status_code=400, detail="explicit_mode must be allow, prefer_clean, or clean_only")
+    validate_optimize_payload(payload)
 
     owner_id = current_owner_id(request)
     cached = get_idempotency_response(owner_id, "optimize", request)
@@ -839,6 +855,7 @@ def async_optimize_job(run_id: str, sid: str, owner_id: str, payload_dict: dict)
 @limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize_async(request: Request, payload: OptimizeRequest):
     payload = apply_builtin_preset(payload)
+    validate_optimize_payload(payload)
     sid = get_session_id(request)
     if not sid:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1335,6 +1352,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
             cfg.pop("playlist", None)
             cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
             cfg_payload = apply_builtin_preset(cfg_payload)
+            validate_optimize_payload(cfg_payload)
             weights = cfg_payload.weights.model_dump() if cfg_payload.weights else {}
             source_playlist_id = parse_playlist_id(cfg_payload.playlist)
 
@@ -1372,6 +1390,11 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 max_bpm_jump=cfg_payload.max_bpm_jump,
                 min_key_compatibility=cfg_payload.min_key_compatibility,
                 no_repeat_artist_within=cfg_payload.no_repeat_artist_within,
+                solver_mode=cfg_payload.solver_mode,
+                beam_width=cfg_payload.beam_width,
+                anneal_steps=cfg_payload.anneal_steps,
+                anneal_temp_start=cfg_payload.anneal_temp_start,
+                anneal_temp_end=cfg_payload.anneal_temp_end,
                 transition_log_path=TRANSITION_LOG_PATH,
             )
 
@@ -1503,6 +1526,11 @@ def run_single_optimization(
         max_bpm_jump=payload.max_bpm_jump,
         min_key_compatibility=payload.min_key_compatibility,
         no_repeat_artist_within=payload.no_repeat_artist_within,
+        solver_mode=payload.solver_mode,
+        beam_width=payload.beam_width,
+        anneal_steps=payload.anneal_steps,
+        anneal_temp_start=payload.anneal_temp_start,
+        anneal_temp_end=payload.anneal_temp_end,
         transition_log_path=TRANSITION_LOG_PATH,
     )
     emit_run_event(run_id, "search", 65, "Optimization complete", {"transitions": len(explainability)})
@@ -1905,6 +1933,11 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         max_bpm_jump=replay.max_bpm_jump,
         min_key_compatibility=replay.min_key_compatibility,
         no_repeat_artist_within=replay.no_repeat_artist_within,
+        solver_mode=replay.solver_mode,
+        beam_width=replay.beam_width,
+        anneal_steps=replay.anneal_steps,
+        anneal_temp_start=replay.anneal_temp_start,
+        anneal_temp_end=replay.anneal_temp_end,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
