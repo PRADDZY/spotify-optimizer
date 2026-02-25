@@ -129,6 +129,28 @@ class SQLiteStateStore:
             rows = cur.fetchall()
         return [(int(row["seq"]), json.loads(row["value"])) for row in rows]
 
+    def delete_older_than(self, namespace: str, older_than_epoch: float) -> int:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "DELETE FROM kv_store WHERE namespace = ? AND updated_at < ?",
+                (namespace, older_than_epoch),
+            )
+            count = cur.rowcount
+            self.conn.commit()
+            return max(0, count)
+
+    def delete_events_older_than(self, namespace: str, older_than_epoch: float) -> int:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "DELETE FROM event_store WHERE namespace = ? AND created_at < ?",
+                (namespace, older_than_epoch),
+            )
+            count = cur.rowcount
+            self.conn.commit()
+            return max(0, count)
+
 
 class DurableRecord(dict):
     def __init__(self, value: Dict[str, Any], persist) -> None:

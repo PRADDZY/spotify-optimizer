@@ -52,6 +52,7 @@ RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "10/minute")
 RATE_LIMIT_OPTIMIZE = os.getenv("RATE_LIMIT_OPTIMIZE", "5/minute")
 RATE_LIMIT_GLOBAL = os.getenv("RATE_LIMIT_GLOBAL", "60/minute")
 TRANSITION_LOG_PATH = os.getenv("TRANSITION_LOG_PATH")
+STATE_RETENTION_DAYS = int(os.getenv("STATE_RETENTION_DAYS", "30"))
 
 
 class WeightConfig(BaseModel):
@@ -227,6 +228,29 @@ REQUEST_LATENCY = Histogram(
     "Request latency in seconds",
     ["method", "path"],
 )
+
+
+def cleanup_state_retention() -> None:
+    if STATE_RETENTION_DAYS <= 0:
+        return
+    cutoff = time.time() - (STATE_RETENTION_DAYS * 86400)
+    namespaces = [
+        "run_history",
+        "comparison_history",
+        "feedback_store",
+        "run_task_status",
+        "report_store",
+        "idempotency_store",
+    ]
+    for namespace in namespaces:
+        try:
+            STATE_STORE.delete_older_than(namespace, cutoff)
+        except Exception:
+            continue
+    try:
+        STATE_STORE.delete_events_older_than("run_event_buffer", cutoff)
+    except Exception:
+        pass
 
 frontend_urls = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
 frontend_urls = [url.strip() for url in frontend_urls if url.strip()]
@@ -1504,9 +1528,13 @@ def run_scheduled_job(schedule_id: str) -> None:
 
 
 def scheduler_loop() -> None:
+    last_cleanup = 0.0
     while not SCHEDULER_STOP.is_set():
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
         current_tick = now.isoformat()
+        if time.time() - last_cleanup > 6 * 3600:
+            cleanup_state_retention()
+            last_cleanup = time.time()
         for schedule_id, schedule in list(SCHEDULE_STORE.items()):
             if not schedule.get("enabled"):
                 continue
@@ -1524,6 +1552,7 @@ def scheduler_loop() -> None:
 
 @app.on_event("startup")
 def start_scheduler() -> None:
+    cleanup_state_retention()
     if getattr(app.state, "scheduler_thread", None):
         return
     thread = threading.Thread(target=scheduler_loop, daemon=True, name="spotify-optimizer-scheduler")
