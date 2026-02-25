@@ -131,7 +131,7 @@ export default function HomePage() {
           <p>
             Treat your playlist like a DJ set. The optimizer pulls tempo, key,
             and energy data to find a smoother ordering and spins up a new
-            playlist with a crisp "_optimized" suffix.
+            playlist with a crisp &quot;_optimized&quot; suffix.
           </p>
         </div>
         <div className="console-panel">
@@ -204,7 +204,7 @@ export default function HomePage() {
               onChange={(event) => setFlowCurve(event.target.checked)}
             />
             <label htmlFor="flow-curve">
-              Flow curve (warm-up -> peak -> cooldown)
+              Flow curve (warm-up {"->"} peak {"->"} cooldown)
             </label>
           </div>
 
@@ -315,11 +315,11 @@ export default function HomePage() {
                 <div className="list">
                   {result.roughest.map((item, index) => (
                     <div className="list-item" key={`${item.from}-${index}`}>
-                      {item.from} -> {item.to} | score {item.score.toFixed(3)} | BPM
+                      {item.from} {"->"} {item.to} | score {item.score.toFixed(3)} | BPM
                       {" "}
-                      {item.from_bpm?.toFixed?.(1) ?? "?"} ->
+                      {item.from_bpm?.toFixed?.(1) ?? "?"} {"->"}
                       {" "}
-                      {item.to_bpm?.toFixed?.(1) ?? "?"} | Key {item.from_key} ->
+                      {item.to_bpm?.toFixed?.(1) ?? "?"} | Key {item.from_key} {"->"}
                       {" "}
                       {item.to_key}
                     </div>

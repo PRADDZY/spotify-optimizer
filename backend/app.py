@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
