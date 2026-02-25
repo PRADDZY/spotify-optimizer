@@ -5,6 +5,7 @@ import secrets
 import threading
 import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -198,6 +199,9 @@ SCHEDULE_STORE: dict[str, dict] = {}
 SCHEDULER_STOP = threading.Event()
 FEEDBACK_STORE: list[dict] = []
 FEEDBACK_WEIGHT_OFFSETS: dict[str, dict[str, float]] = {}
+RUN_TASK_STATUS: dict[str, dict] = {}
+RUN_EVENT_BUFFERS: dict[str, list[dict]] = defaultdict(list)
+REPORT_STORE: dict[str, dict] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -621,93 +625,101 @@ def optimize(request: Request, payload: OptimizeRequest):
         raise HTTPException(status_code=400, detail="explicit_mode must be allow, prefer_clean, or clean_only")
 
     sp = spotify_for_session(request)
-
-    weights = payload.weights.model_dump() if payload.weights else {}
-
-    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
-    source_playlist_id = parse_playlist_id(payload.playlist)
-    source_track_ids = fetch_playlist_track_ids(sp, source_playlist_id)
-
-    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
-        sp=sp,
-        playlist_id=source_playlist_id,
-        cache_path=cache_path,
-        weights=weights,
-        bpm_window=payload.bpm_window,
-        restarts=payload.restarts,
-        two_opt_passes=payload.two_opt_passes,
-        missing=payload.missing,
-        seed=42,
-        mix_mode=payload.mix_mode,
-        flow_curve=payload.flow_curve,
-        flow_profile=payload.flow_profile,
-        key_lock_window=payload.key_lock_window,
-        tempo_ramp_weight=payload.tempo_ramp_weight,
-        minimax_passes=payload.minimax_passes,
-        locked_first_track_id=payload.locked_first_track_id,
-        locked_last_track_id=payload.locked_last_track_id,
-        locked_blocks=payload.locked_blocks,
-        artist_gap=payload.artist_gap,
-        album_gap=payload.album_gap,
-        explicit_mode=payload.explicit_mode,
-        duration_target_sec=payload.duration_target_sec,
-        duration_tolerance_sec=payload.duration_tolerance_sec,
-        genre_cluster_strength=payload.genre_cluster_strength,
-        mood_curve_points=[point.model_dump() for point in payload.mood_curve_points or []],
-        bpm_guardrails=payload.bpm_guardrails or [],
-        harmonic_strict=payload.harmonic_strict,
-        feedback_offsets=feedback_offsets,
-        smoothness_weight=payload.smoothness_weight,
-        variety_weight=payload.variety_weight,
-        transition_log_path=TRANSITION_LOG_PATH,
-    )
-
-    base_name = payload.name or playlist_name or "Playlist"
-    new_name = optimized_name(base_name)
-
-    ordered_ids = [t.id for t in ordered_tracks]
-    playlist_id = create_playlist_with_items(
-        sp=sp,
-        name=new_name,
-        public=payload.public,
-        track_ids=ordered_ids,
-        description="Optimized playlist order",
-    )
-
-    snapshot_id = uuid.uuid4().hex
-    SNAPSHOT_STORE[snapshot_id] = {
-        "owner_id": owner_id,
-        "source_playlist_id": source_playlist_id,
-        "source_playlist_name": playlist_name,
-        "source_track_ids": source_track_ids,
-        "optimized_track_ids": ordered_ids,
-        "output_playlist_id": playlist_id,
-        "note": "auto_snapshot",
-        "created_at": time.time(),
+    owner_id = current_owner_id(request)
+    result = run_single_optimization(sp=sp, owner_id=owner_id, payload=payload, seed=42)
+    RUN_TASK_STATUS[result["run_id"]] = {
+        "status": "completed",
+        "progress": 100,
+        "result": result,
+        "updated_at": time.time(),
     }
+    return result
 
+
+def async_optimize_job(run_id: str, sid: str, owner_id: str, payload_dict: dict) -> None:
+    try:
+        RUN_TASK_STATUS[run_id] = {"status": "running", "progress": 5, "updated_at": time.time()}
+        emit_run_event(run_id, "queued", 5, "Queued async optimization")
+        sp = spotify_for_sid(sid)
+        if not sp:
+            raise RuntimeError("session expired or missing for async run")
+        payload = OptimizeRequest(**payload_dict)
+        result = run_single_optimization(
+            sp=sp,
+            owner_id=owner_id,
+            payload=payload,
+            seed=45,
+            run_id=run_id,
+        )
+        RUN_TASK_STATUS[run_id] = {
+            "status": "completed",
+            "progress": 100,
+            "result": result,
+            "updated_at": time.time(),
+        }
+    except Exception as exc:
+        RUN_TASK_STATUS[run_id] = {
+            "status": "failed",
+            "progress": 100,
+            "error": str(exc),
+            "updated_at": time.time(),
+        }
+        emit_run_event(run_id, "failed", 100, "Run failed", {"error": str(exc)})
+
+
+@app.post("/optimize/async")
+@limiter.limit(RATE_LIMIT_OPTIMIZE)
+def optimize_async(request: Request, payload: OptimizeRequest):
+    sid = get_session_id(request)
+    if not sid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     run_id = uuid.uuid4().hex
-    RUN_HISTORY[run_id] = {
-        "source_playlist_id": source_playlist_id,
-        "playlist_id": playlist_id,
-        "playlist_name": playlist_name,
-        "transition_score": round(cost, 4),
-        "roughest": roughest,
-        "transitions": explainability,
-        "request": payload.model_dump(),
-        "public": payload.public,
-        "snapshot_id": snapshot_id,
-        "created_at": time.time(),
+    owner_id = current_owner_id(request)
+    RUN_TASK_STATUS[run_id] = {
+        "status": "queued",
+        "progress": 0,
+        "updated_at": time.time(),
     }
+    emit_run_event(run_id, "queued", 0, "Async run queued")
+    worker = threading.Thread(
+        target=async_optimize_job,
+        args=(run_id, sid, owner_id, payload.model_dump()),
+        daemon=True,
+        name=f"optimize-async-{run_id[:8]}",
+    )
+    worker.start()
+    return {"run_id": run_id, "status": "queued"}
 
-    return {
-        "run_id": run_id,
-        "playlist_id": playlist_id,
-        "playlist_name": new_name,
-        "playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
-        "transition_score": round(cost, 4),
-        "roughest": roughest,
-    }
+
+@app.get("/optimize/{run_id}")
+def optimize_status(run_id: str):
+    status = RUN_TASK_STATUS.get(run_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"run_id": run_id, **status}
+
+
+@app.get("/events/{run_id}")
+def run_events(run_id: str):
+    def event_generator():
+        cursor = 0
+        idle_ticks = 0
+        while idle_ticks < 600:
+            events = RUN_EVENT_BUFFERS.get(run_id, [])
+            while cursor < len(events):
+                payload = json.dumps(events[cursor])
+                cursor += 1
+                yield f"data: {payload}\n\n"
+                idle_ticks = 0
+            status = RUN_TASK_STATUS.get(run_id, {})
+            if status.get("status") in {"completed", "failed"} and cursor >= len(events):
+                break
+            idle_ticks += 1
+            time.sleep(0.5)
+        end_payload = json.dumps({"event": "stream_end", "run_id": run_id})
+        yield f"data: {end_payload}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/optimize/{run_id}/transitions")
@@ -734,6 +746,59 @@ def run_summary_metrics(run: dict) -> dict:
         "max_edge_score": round(max(scores), 6),
         "edge_count": len(scores),
     }
+
+
+def build_run_report(run_id: str, run: dict) -> dict:
+    transitions = run.get("transitions", [])
+    top = sorted(transitions, key=lambda item: float(item.get("score", 0.0)), reverse=True)[:10]
+    return {
+        "run_id": run_id,
+        "created_at": run.get("created_at"),
+        "source_playlist_id": run.get("source_playlist_id"),
+        "playlist_id": run.get("playlist_id"),
+        "playlist_name": run.get("playlist_name"),
+        "transition_score": run.get("transition_score"),
+        "metrics": run_summary_metrics(run),
+        "roughest": run.get("roughest", []),
+        "top_transitions": top,
+        "request": run.get("request", {}),
+    }
+
+
+def build_simple_pdf(lines: list[str]) -> bytes:
+    sanitized = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") for line in lines]
+    text_ops = []
+    y = 760
+    for line in sanitized:
+        text_ops.append(f"1 0 0 1 40 {y} Tm ({line}) Tj")
+        y -= 14
+        if y < 40:
+            break
+    stream = "BT /F1 10 Tf " + " ".join(text_ops) + " ET"
+    objects = [
+        "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >> endobj\n",
+        f"4 0 obj << /Length {len(stream.encode('latin-1'))} >> stream\n{stream}\nendstream endobj\n",
+        "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+    ]
+    output = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(output))
+        output.extend(obj.encode("latin-1"))
+    xref_pos = len(output)
+    output.extend(f"xref\n0 {len(offsets)}\n".encode("latin-1"))
+    output.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        output.extend(f"{offset:010d} 00000 n \n".encode("latin-1"))
+    output.extend(
+        (
+            f"trailer << /Size {len(offsets)} /Root 1 0 R >>\n"
+            f"startxref\n{xref_pos}\n%%EOF"
+        ).encode("latin-1")
+    )
+    return bytes(output)
 
 
 @app.post("/compare")
@@ -775,6 +840,49 @@ def get_comparison(comparison_id: str):
     if not comparison:
         raise HTTPException(status_code=404, detail="comparison not found")
     return {"comparison_id": comparison_id, **comparison}
+
+
+@app.get("/reports/{run_id}")
+def report_json(request: Request, run_id: str):
+    run = RUN_HISTORY.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    report = build_run_report(run_id, run)
+    REPORT_STORE[run_id] = {
+        "owner_id": current_owner_id(request),
+        "created_at": time.time(),
+        "report": report,
+    }
+    return report
+
+
+@app.get("/reports/{run_id}.pdf")
+def report_pdf(request: Request, run_id: str):
+    run = RUN_HISTORY.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    report = build_run_report(run_id, run)
+    lines = [
+        f"Spotify Optimizer Report - Run {run_id}",
+        f"Playlist: {report.get('playlist_name', '')}",
+        f"Source Playlist ID: {report.get('source_playlist_id', '')}",
+        f"Output Playlist ID: {report.get('playlist_id', '')}",
+        f"Transition Score: {report.get('transition_score', '')}",
+        f"Mean Edge Score: {report['metrics'].get('mean_edge_score', '')}",
+        f"Max Edge Score: {report['metrics'].get('max_edge_score', '')}",
+        "Top Transitions:",
+    ]
+    for item in report.get("top_transitions", [])[:8]:
+        lines.append(f"- {item.get('from_track')} -> {item.get('to_track')} (score {item.get('score')})")
+    pdf_bytes = build_simple_pdf(lines)
+    headers = {"Content-Disposition": f"attachment; filename=report_{run_id}.pdf"}
+    REPORT_STORE[run_id] = {
+        "owner_id": current_owner_id(request),
+        "created_at": time.time(),
+        "report": report,
+        "pdf_bytes": len(pdf_bytes),
+    }
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 @app.post("/feedback/manual")
@@ -1024,6 +1132,122 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
     }
     BATCH_STORE[batch_id] = batch_record
     return batch_id, batch_record
+
+
+def emit_run_event(run_id: str, event: str, progress: int, message: str, data: Optional[dict] = None) -> None:
+    RUN_EVENT_BUFFERS[run_id].append(
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "progress": max(0, min(100, progress)),
+            "message": message,
+            "data": data or {},
+        }
+    )
+    RUN_TASK_STATUS.setdefault(run_id, {})
+    RUN_TASK_STATUS[run_id]["progress"] = max(0, min(100, progress))
+
+
+def run_single_optimization(
+    sp: spotipy.Spotify,
+    owner_id: str,
+    payload: OptimizeRequest,
+    seed: int,
+    parent_run_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> dict:
+    run_id = run_id or uuid.uuid4().hex
+    emit_run_event(run_id, "start", 2, "Starting optimization")
+
+    weights = payload.weights.model_dump() if payload.weights else {}
+    feedback_offsets = owner_feedback_offsets(owner_id)
+    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
+    source_playlist_id = parse_playlist_id(payload.playlist)
+    source_track_ids = fetch_playlist_track_ids(sp, source_playlist_id)
+    emit_run_event(run_id, "ingest", 15, "Fetched playlist tracks", {"count": len(source_track_ids)})
+
+    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+        sp=sp,
+        playlist_id=source_playlist_id,
+        cache_path=cache_path,
+        weights=weights,
+        bpm_window=payload.bpm_window,
+        restarts=payload.restarts,
+        two_opt_passes=payload.two_opt_passes,
+        missing=payload.missing,
+        seed=seed,
+        mix_mode=payload.mix_mode,
+        flow_curve=payload.flow_curve,
+        flow_profile=payload.flow_profile,
+        key_lock_window=payload.key_lock_window,
+        tempo_ramp_weight=payload.tempo_ramp_weight,
+        minimax_passes=payload.minimax_passes,
+        locked_first_track_id=payload.locked_first_track_id,
+        locked_last_track_id=payload.locked_last_track_id,
+        locked_blocks=payload.locked_blocks,
+        artist_gap=payload.artist_gap,
+        album_gap=payload.album_gap,
+        explicit_mode=payload.explicit_mode,
+        duration_target_sec=payload.duration_target_sec,
+        duration_tolerance_sec=payload.duration_tolerance_sec,
+        genre_cluster_strength=payload.genre_cluster_strength,
+        mood_curve_points=[point.model_dump() for point in payload.mood_curve_points or []],
+        bpm_guardrails=payload.bpm_guardrails or [],
+        harmonic_strict=payload.harmonic_strict,
+        feedback_offsets=feedback_offsets,
+        smoothness_weight=payload.smoothness_weight,
+        variety_weight=payload.variety_weight,
+        transition_log_path=TRANSITION_LOG_PATH,
+    )
+    emit_run_event(run_id, "search", 65, "Optimization complete", {"transitions": len(explainability)})
+
+    base_name = payload.name or playlist_name or "Playlist"
+    new_name = optimized_name(base_name)
+    ordered_ids = [track.id for track in ordered_tracks]
+    playlist_id = create_playlist_with_items(
+        sp=sp,
+        name=new_name,
+        public=payload.public,
+        track_ids=ordered_ids,
+        description="Optimized playlist order",
+    )
+    emit_run_event(run_id, "publish", 90, "Created optimized playlist", {"playlist_id": playlist_id})
+
+    snapshot_id = uuid.uuid4().hex
+    SNAPSHOT_STORE[snapshot_id] = {
+        "owner_id": owner_id,
+        "source_playlist_id": source_playlist_id,
+        "source_playlist_name": playlist_name,
+        "source_track_ids": source_track_ids,
+        "optimized_track_ids": ordered_ids,
+        "output_playlist_id": playlist_id,
+        "note": "auto_snapshot",
+        "created_at": time.time(),
+    }
+
+    RUN_HISTORY[run_id] = {
+        "source_playlist_id": source_playlist_id,
+        "playlist_id": playlist_id,
+        "playlist_name": playlist_name,
+        "transition_score": round(cost, 4),
+        "roughest": roughest,
+        "transitions": explainability,
+        "request": payload.model_dump(),
+        "public": payload.public,
+        "snapshot_id": snapshot_id,
+        "parent_run_id": parent_run_id,
+        "created_at": time.time(),
+    }
+
+    emit_run_event(run_id, "done", 100, "Run completed", {"snapshot_id": snapshot_id})
+    return {
+        "run_id": run_id,
+        "playlist_id": playlist_id,
+        "playlist_name": new_name,
+        "playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
+        "transition_score": round(cost, 4),
+        "roughest": roughest,
+    }
 
 
 @app.post("/presets")
