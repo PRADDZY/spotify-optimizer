@@ -53,6 +53,8 @@ RATE_LIMIT_OPTIMIZE = os.getenv("RATE_LIMIT_OPTIMIZE", "5/minute")
 RATE_LIMIT_GLOBAL = os.getenv("RATE_LIMIT_GLOBAL", "60/minute")
 TRANSITION_LOG_PATH = os.getenv("TRANSITION_LOG_PATH")
 STATE_RETENTION_DAYS = int(os.getenv("STATE_RETENTION_DAYS", "30"))
+MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1048576"))
+SECURITY_HEADERS_ENABLED = os.getenv("SECURITY_HEADERS_ENABLED", "true").lower() == "true"
 
 
 class WeightConfig(BaseModel):
@@ -314,6 +316,25 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
         status_code=422,
         content={"detail": exc.errors(), "request_id": request_id},
     )
+
+
+@app.middleware("http")
+async def request_guardrails(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid content-length header"})
+
+    response = await call_next(request)
+    if SECURITY_HEADERS_ENABLED:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    return response
 
 
 @app.middleware("http")

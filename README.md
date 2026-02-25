@@ -106,6 +106,7 @@ Backend: `http://localhost:8000`
 - Runtime state is now persisted in SQLite (`STATE_DB_PATH`) so runs/presets/schedules/snapshots survive restarts.
 - Old runtime records/events are pruned by retention policy (`STATE_RETENTION_DAYS`, default 30).
 - Spotify API calls use automatic retry/backoff (`SPOTIFY_API_RETRIES`, `SPOTIFY_API_BACKOFF`) for transient failures.
+- API guardrails include request size limits (`MAX_REQUEST_BYTES`) and default security headers (`SECURITY_HEADERS_ENABLED`).
 - Use `Idempotency-Key` request header on `POST /optimize` and `POST /optimize/async` to avoid duplicate runs.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
 - `/metrics` exposes Prometheus-compatible metrics.
