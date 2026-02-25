@@ -64,6 +64,8 @@ MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(os.path.dirname(__file__), "mode
 MODEL_BLEND_ALPHA = float(os.getenv("MODEL_BLEND_ALPHA", "0.2"))
 MODEL_MIN_SAMPLES = int(os.getenv("MODEL_MIN_SAMPLES", "20"))
 MODEL_RETRAIN_INTERVAL_MINUTES = int(os.getenv("MODEL_RETRAIN_INTERVAL_MINUTES", "240"))
+MODEL_MIN_ACCURACY = float(os.getenv("MODEL_MIN_ACCURACY", "0.55"))
+MODEL_MAX_LOSS = float(os.getenv("MODEL_MAX_LOSS", "0.72"))
 MODEL_ADMIN_USER_IDS = {
     value.strip()
     for value in os.getenv("MODEL_ADMIN_USER_IDS", "").split(",")
@@ -426,6 +428,61 @@ def active_model_payload() -> dict[str, object]:
     }
 
 
+def model_quality_thresholds() -> dict[str, float]:
+    return {
+        "min_accuracy": max(0.0, min(1.0, float(MODEL_MIN_ACCURACY))),
+        "max_loss": max(0.0, float(MODEL_MAX_LOSS)),
+    }
+
+
+def evaluate_quality_gate(
+    metrics: Optional[dict],
+    validation_metrics: Optional[dict] = None,
+) -> dict[str, object]:
+    thresholds = model_quality_thresholds()
+    metric_source = "validation" if isinstance(validation_metrics, dict) and validation_metrics else "train"
+    source_metrics = validation_metrics if metric_source == "validation" else metrics
+    source_metrics = source_metrics if isinstance(source_metrics, dict) else {}
+
+    raw_accuracy = source_metrics.get("accuracy")
+    raw_loss = source_metrics.get("loss")
+
+    accuracy = None if raw_accuracy is None else float(raw_accuracy)
+    loss = None if raw_loss is None else float(raw_loss)
+
+    reasons: list[str] = []
+    if accuracy is None:
+        reasons.append("accuracy metric missing")
+    elif accuracy < thresholds["min_accuracy"]:
+        reasons.append(
+            f"accuracy {accuracy:.4f} below minimum {thresholds['min_accuracy']:.4f}"
+        )
+
+    if loss is None:
+        reasons.append("loss metric missing")
+    elif loss > thresholds["max_loss"]:
+        reasons.append(f"loss {loss:.4f} above maximum {thresholds['max_loss']:.4f}")
+
+    return {
+        "passed": len(reasons) == 0,
+        "metric_source": metric_source,
+        "metrics": {
+            "accuracy": accuracy,
+            "loss": loss,
+        },
+        "thresholds": thresholds,
+        "reasons": reasons,
+    }
+
+
+def quality_gate_for_record(record: Optional[dict]) -> dict[str, object]:
+    data = record if isinstance(record, dict) else {}
+    return evaluate_quality_gate(
+        metrics=data.get("metrics"),
+        validation_metrics=data.get("validation_metrics"),
+    )
+
+
 def update_training_job(job_id: str, **updates) -> dict:
     current = dict(TRAINING_JOB_STORE.get(job_id, {}))
     current.update(updates)
@@ -460,15 +517,22 @@ def execute_transition_training(owner_id: Optional[str], min_samples: int, activ
         }
 
     artifact_path = save_model_artifact(MODEL_DIR, model.to_dict())
+    quality_gate = evaluate_quality_gate(
+        metrics=details.get("metrics"),
+        validation_metrics=details.get("validation_metrics"),
+    )
+    should_activate = bool(activate and quality_gate.get("passed"))
     MODEL_REGISTRY[model.version] = {
         "artifact_path": artifact_path,
         "owner_scope": owner_id or "all",
         "metrics": details.get("metrics", {}),
+        "validation_metrics": details.get("validation_metrics", {}),
+        "quality_gate": quality_gate,
         "sample_count": details.get("sample_count", 0),
         "created_at": time.time(),
     }
 
-    if activate:
+    if should_activate:
         MODEL_STATE["active_version"] = model.version
         MODEL_STATE["last_auto_train_at"] = time.time()
         refresh_active_model_cache()
@@ -479,6 +543,8 @@ def execute_transition_training(owner_id: Optional[str], min_samples: int, activ
         "version": model.version,
         "artifact_path": artifact_path,
         "activate": activate,
+        "activated": should_activate,
+        "quality_gate": quality_gate,
         "started_at": started_at,
         "finished_at": time.time(),
         **details,
@@ -1484,17 +1550,21 @@ def require_model_admin(request: Request) -> str:
 def model_status(request: Request):
     _ = require_model_admin(request)
     refresh_active_model_cache()
-    versions = [
-        {"version": version, **record}
-        for version, record in MODEL_REGISTRY.items()
-    ]
+    versions = []
+    for version, record in MODEL_REGISTRY.items():
+        row = {"version": version, **record}
+        row["quality_gate"] = quality_gate_for_record(record)
+        versions.append(row)
     versions.sort(key=lambda row: row.get("created_at", 0), reverse=True)
     active = active_model_payload()
+    active_record = MODEL_REGISTRY.get(str(active.get("version"))) if active.get("version") else None
     return {
         "active_version": active.get("version"),
         "alpha": active.get("alpha"),
         "sample_count": active.get("sample_count"),
         "min_samples": MODEL_MIN_SAMPLES,
+        "quality_gate_thresholds": model_quality_thresholds(),
+        "active_quality_gate": quality_gate_for_record(active_record) if active_record else None,
         "available_versions": versions[:20],
     }
 
@@ -1535,9 +1605,14 @@ def model_activate(request: Request, version: str):
     artifact = load_model_artifact(record.get("artifact_path", ""))
     if not artifact:
         raise HTTPException(status_code=404, detail="model artifact missing")
+    quality_gate = quality_gate_for_record(record)
+    if not quality_gate.get("passed"):
+        reasons = quality_gate.get("reasons") or []
+        reason_text = ", ".join(str(reason) for reason in reasons) if reasons else "unknown gate failure"
+        raise HTTPException(status_code=409, detail=f"quality gate failed: {reason_text}")
     MODEL_STATE["active_version"] = version
     refresh_active_model_cache()
-    return {"activated": True, "version": version}
+    return {"activated": True, "version": version, "quality_gate": quality_gate}
 
 
 def current_owner_id(request: Request) -> str:

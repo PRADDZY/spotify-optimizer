@@ -66,7 +66,23 @@ type ModelStatus = {
   active_version: string | null;
   alpha: number;
   sample_count: number;
-  available_versions: Array<{ version: string; sample_count?: number; created_at?: number }>;
+  quality_gate_thresholds?: {
+    min_accuracy: number;
+    max_loss: number;
+  };
+  active_quality_gate?: {
+    passed: boolean;
+    reasons?: string[];
+  } | null;
+  available_versions: Array<{
+    version: string;
+    sample_count?: number;
+    created_at?: number;
+    quality_gate?: {
+      passed: boolean;
+      reasons?: string[];
+    };
+  }>;
 };
 
 type ModelTrainingJob = {
@@ -78,6 +94,11 @@ type ModelTrainingJob = {
     version?: string;
     reason?: string;
     sample_count?: number;
+    activated?: boolean;
+    quality_gate?: {
+      passed?: boolean;
+      reasons?: string[];
+    };
   };
   error?: string | null;
 };
@@ -527,7 +548,19 @@ export default function HomePage() {
         if (statusPayload.status === "completed") {
           const resultPayload = statusPayload.result ?? {};
           if (resultPayload.trained) {
-            setModelMessage(`Model trained: ${resultPayload.version}`);
+            const gateFailed = resultPayload.quality_gate?.passed === false;
+            const gateReason = resultPayload.quality_gate?.reasons?.[0];
+            if (resultPayload.activated) {
+              setModelMessage(`Model trained + activated: ${resultPayload.version}`);
+            } else if (gateFailed) {
+              setModelMessage(
+                gateReason
+                  ? `Model trained but not activated (${gateReason}).`
+                  : "Model trained but not activated (quality gate failed)."
+              );
+            } else {
+              setModelMessage(`Model trained: ${resultPayload.version}`);
+            }
           } else {
             setModelMessage(
               resultPayload.reason ?? "Training completed without enough labeled transitions."
@@ -1162,6 +1195,21 @@ export default function HomePage() {
               </div>
               <div className="list-item">
                 Samples: {modelStatus?.sample_count ?? 0}
+              </div>
+              <div className="list-item">
+                Gate min accuracy:{" "}
+                {(modelStatus?.quality_gate_thresholds?.min_accuracy ?? 0).toFixed(2)}
+              </div>
+              <div className="list-item">
+                Gate max loss: {(modelStatus?.quality_gate_thresholds?.max_loss ?? 0).toFixed(2)}
+              </div>
+              <div className="list-item">
+                Active gate:{" "}
+                {modelStatus?.active_quality_gate
+                  ? modelStatus.active_quality_gate.passed
+                    ? "pass"
+                    : "fail"
+                  : "n/a"}
               </div>
             </div>
             <div className="button-row" style={{ marginTop: 12 }}>

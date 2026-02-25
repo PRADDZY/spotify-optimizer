@@ -90,6 +90,10 @@ def test_train_transition_model_from_feedback_produces_model_when_sample_count_i
     assert model is not None
     assert details["trained"] is True
     assert model.sample_count >= 10
+    assert details["train_sample_count"] + details["validation_sample_count"] == details["sample_count"]
+    assert details["validation_sample_count"] > 0
+    assert "validation_metrics" in details
+    assert 0.0 <= details["validation_metrics"]["accuracy"] <= 1.0
 
 
 def test_model_store_round_trip(tmp_path):
