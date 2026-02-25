@@ -158,6 +158,7 @@ def test_model_status_endpoint_returns_expected_shape_for_admin(monkeypatch):
     assert "active_version" in payload
     assert "available_versions" in payload
     assert "quality_gate_thresholds" in payload
+    assert "promotion_thresholds" in payload
 
 
 def test_model_train_endpoint_returns_graceful_response_when_data_is_small(monkeypatch):
@@ -258,5 +259,113 @@ def test_model_activate_endpoint_rejects_versions_that_fail_quality_gate(monkeyp
     response = client.post(f"/model/activate/{version}")
     assert response.status_code == 409
     assert "quality gate failed" in response.json().get("detail", "")
+
+    clear_model_state()
+
+
+def test_execute_transition_training_blocks_activation_when_promotion_gate_fails(monkeypatch):
+    clear_model_state()
+    monkeypatch.setattr(app_module, "MODEL_MIN_ACCURACY", 0.5)
+    monkeypatch.setattr(app_module, "MODEL_MAX_LOSS", 0.9)
+    monkeypatch.setattr(app_module, "MODEL_MIN_ACCURACY_DELTA", 0.02)
+    monkeypatch.setattr(app_module, "MODEL_MAX_LOSS_DELTA", 0.0)
+
+    active_version = f"transition_active_{uuid.uuid4().hex[:8]}"
+    MODEL_STATE["active_version"] = active_version
+    MODEL_REGISTRY[active_version] = {
+        "artifact_path": "",
+        "owner_scope": "all",
+        "metrics": {"accuracy": 0.72, "loss": 0.36},
+        "validation_metrics": {"accuracy": 0.78, "loss": 0.31},
+        "sample_count": 120,
+        "created_at": time.time(),
+    }
+
+    candidate_version = f"transition_candidate_{uuid.uuid4().hex[:8]}"
+
+    def fake_train(*args, **kwargs):
+        model = TransitionModel(
+            version=candidate_version,
+            weights={key: 0.01 for key in MODEL_FEATURE_KEYS},
+            bias=0.0,
+            trained_at=time.time(),
+            sample_count=64,
+        )
+        details = {
+            "trained": True,
+            "sample_count": 64,
+            "metrics": {"accuracy": 0.75, "loss": 0.35},
+            "validation_metrics": {"accuracy": 0.77, "loss": 0.33},
+            "positive_ratio": 0.4,
+            "version": candidate_version,
+        }
+        return model, details
+
+    monkeypatch.setattr(app_module, "train_transition_model_from_feedback", fake_train)
+
+    result = execute_transition_training(owner_id=None, min_samples=10, activate=True)
+
+    assert result["trained"] is True
+    assert result["quality_gate"]["passed"] is True
+    assert result["promotion_gate"]["passed"] is False
+    assert result["activated"] is False
+    assert MODEL_STATE.get("active_version") == active_version
+    clear_model_state()
+
+
+def test_model_activate_endpoint_rejects_versions_that_fail_promotion_gate(monkeypatch):
+    clear_model_state()
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    monkeypatch.setattr(app_module, "MODEL_MIN_ACCURACY", 0.5)
+    monkeypatch.setattr(app_module, "MODEL_MAX_LOSS", 0.9)
+    monkeypatch.setattr(app_module, "MODEL_MIN_ACCURACY_DELTA", 0.01)
+    monkeypatch.setattr(app_module, "MODEL_MAX_LOSS_DELTA", 0.0)
+
+    active_version = f"transition_active_{uuid.uuid4().hex[:8]}"
+    active_artifact_path = save_model_artifact(
+        MODEL_DIR,
+        TransitionModel(
+            version=active_version,
+            weights={key: 0.01 for key in MODEL_FEATURE_KEYS},
+            bias=0.0,
+            trained_at=time.time(),
+            sample_count=80,
+        ).to_dict(),
+    )
+    MODEL_STATE["active_version"] = active_version
+    MODEL_REGISTRY[active_version] = {
+        "artifact_path": active_artifact_path,
+        "owner_scope": "all",
+        "metrics": {"accuracy": 0.71, "loss": 0.36},
+        "validation_metrics": {"accuracy": 0.79, "loss": 0.31},
+        "sample_count": 80,
+        "created_at": time.time(),
+    }
+
+    candidate_version = f"transition_candidate_{uuid.uuid4().hex[:8]}"
+    candidate_artifact_path = save_model_artifact(
+        MODEL_DIR,
+        TransitionModel(
+            version=candidate_version,
+            weights={key: 0.01 for key in MODEL_FEATURE_KEYS},
+            bias=0.0,
+            trained_at=time.time(),
+            sample_count=80,
+        ).to_dict(),
+    )
+    MODEL_REGISTRY[candidate_version] = {
+        "artifact_path": candidate_artifact_path,
+        "owner_scope": "all",
+        "metrics": {"accuracy": 0.68, "loss": 0.37},
+        "validation_metrics": {"accuracy": 0.77, "loss": 0.33},
+        "sample_count": 80,
+        "created_at": time.time(),
+    }
+
+    client = make_authenticated_client("admin-user")
+    response = client.post(f"/model/activate/{candidate_version}")
+    assert response.status_code == 409
+    assert "promotion gate failed" in response.json().get("detail", "")
+    assert MODEL_STATE.get("active_version") == active_version
 
     clear_model_state()
