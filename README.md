@@ -115,7 +115,7 @@ Backend: `http://localhost:8000`
 - A versioned transition model can be trained from explicit feedback labels via `POST /model/train` and inspected via `GET /model/status`.
 - Active model blending is controlled by `MODEL_BLEND_ALPHA`; artifacts are stored under `MODEL_DIR`.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
-- Spotify's developer terms prohibit using Spotify content to train ML models; this tool is heuristic-based.
+- Spotify's developer terms prohibit training on Spotify content. The model here is trained only on explicit user feedback labels + transition diagnostics.
 
 ## VPS Deploy
 
