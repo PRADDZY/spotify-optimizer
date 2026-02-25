@@ -9,7 +9,9 @@ from backend.optimizer_core import (
     apply_explicit_filter,
     apply_duration_target,
     apply_weight_offsets,
+    anneal_refine,
     append_transition_log,
+    beam_search_order,
     build_custom_curve,
     recommend_crossfade_seconds,
     transition_component_breakdown,
@@ -379,3 +381,37 @@ def test_component_contributions_normalize_to_unit_sum():
 def test_transition_reason_code_matches_dominant_component():
     components = {"bpm": 0.01, "key": 0.7, "energy": 0.2}
     assert transition_reason_code(components) == "harmonic_mismatch"
+
+
+def test_beam_search_order_returns_complete_path():
+    dist = [
+        [0.0, 0.2, 0.4, 0.6, 0.3],
+        [0.2, 0.0, 0.25, 0.45, 0.15],
+        [0.4, 0.25, 0.0, 0.2, 0.3],
+        [0.6, 0.45, 0.2, 0.0, 0.35],
+        [0.3, 0.15, 0.3, 0.35, 0.0],
+    ]
+    order = beam_search_order(dist, start=0, width=4)
+    assert len(order) == 5
+    assert sorted(order) == [0, 1, 2, 3, 4]
+
+
+def test_anneal_refine_is_deterministic_for_fixed_seed():
+    dist = [
+        [0.0, 0.2, 0.4, 0.6, 0.3],
+        [0.2, 0.0, 0.25, 0.45, 0.15],
+        [0.4, 0.25, 0.0, 0.2, 0.3],
+        [0.6, 0.45, 0.2, 0.0, 0.35],
+        [0.3, 0.15, 0.3, 0.35, 0.0],
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+    import random
+
+    start_order = [0, 1, 2, 3, 4]
+    order_a = anneal_refine(start_order, objective, random.Random(42), 30, 0.08, 0.004)
+    order_b = anneal_refine(start_order, objective, random.Random(42), 30, 0.08, 0.004)
+    cost_a = objective(order_a)
+    cost_b = objective(order_b)
+    assert order_a == order_b
+    assert cost_a == cost_b
+    assert sorted(order_a) == [0, 1, 2, 3, 4]

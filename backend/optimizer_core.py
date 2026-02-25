@@ -1370,6 +1370,86 @@ def pick_start_indices(dist: List[List[float]], tracks: List[Track], rng: random
 
     return starts
 
+
+def beam_search_order(dist: List[List[float]], start: int, width: int) -> List[int]:
+    n = len(dist)
+    if n == 0:
+        return []
+    width = max(1, width)
+    beams: List[Tuple[List[int], set[int], float]] = [([start], set(range(n)) - {start}, 0.0)]
+
+    while True:
+        expanded: List[Tuple[List[int], set[int], float]] = []
+        has_remaining = False
+        for order, remaining, cost in beams:
+            if not remaining:
+                expanded.append((order, remaining, cost))
+                continue
+            has_remaining = True
+            last = order[-1]
+            ranked = sorted(remaining, key=lambda idx: dist[last][idx])[: max(2, width * 2)]
+            for nxt in ranked:
+                next_remaining = set(remaining)
+                next_remaining.remove(nxt)
+                expanded.append((order + [nxt], next_remaining, cost + dist[last][nxt]))
+
+        if not has_remaining:
+            break
+        expanded.sort(key=lambda item: item[2])
+        beams = expanded[:width]
+        if not beams:
+            break
+
+    if not beams:
+        return [start]
+    best = min(beams, key=lambda item: item[2])
+    return best[0]
+
+
+def anneal_refine(
+    order: List[int],
+    objective_fn: Callable[[List[int]], float],
+    rng: random.Random,
+    steps: int,
+    temp_start: float,
+    temp_end: float,
+) -> List[int]:
+    if len(order) < 3 or steps <= 0:
+        return order
+
+    current = list(order)
+    current_cost = objective_fn(current)
+    best = list(current)
+    best_cost = current_cost
+
+    start_temp = max(float(temp_start), 1e-6)
+    end_temp = max(float(temp_end), 1e-6)
+
+    for step in range(steps):
+        i, j = sorted(rng.sample(range(len(current)), 2))
+        if i == j:
+            continue
+
+        candidate = list(current)
+        if rng.random() < 0.55 and j - i >= 2:
+            candidate[i : j + 1] = reversed(candidate[i : j + 1])
+        else:
+            candidate[i], candidate[j] = candidate[j], candidate[i]
+
+        candidate_cost = objective_fn(candidate)
+        progress = step / max(1, steps - 1)
+        temp = start_temp + (end_temp - start_temp) * progress
+        temp = max(end_temp, temp)
+        delta = candidate_cost - current_cost
+        if delta < 0 or rng.random() < math.exp(-delta / max(temp, 1e-6)):
+            current = candidate
+            current_cost = candidate_cost
+            if current_cost < best_cost:
+                best = list(current)
+                best_cost = current_cost
+
+    return best
+
 def optimize_order(
     dist: List[List[float]],
     tracks: List[Track],
@@ -1381,6 +1461,11 @@ def optimize_order(
     energy_targets: Optional[List[float]],
     minimax_passes: int,
     genre_cluster_strength: float = 0.0,
+    solver_mode: str = "hybrid",
+    beam_width: int = 8,
+    anneal_steps: int = 140,
+    anneal_temp_start: float = 0.08,
+    anneal_temp_end: float = 0.004,
 ) -> Tuple[List[int], float]:
     n = len(dist)
     if n == 0:
@@ -1398,6 +1483,11 @@ def optimize_order(
     for idx, start in enumerate(starts):
         candidate_orders.append(nearest_neighbor(dist, start, rng if idx > 0 else None, k=4))
 
+    if solver_mode == "hybrid":
+        beam_starts = starts[: max(2, min(5, beam_width))]
+        for start in beam_starts:
+            candidate_orders.append(beam_search_order(dist, start, width=max(2, beam_width)))
+
     cluster_seed = build_cluster_seed_order(tracks, flow_profile)
     if cluster_seed:
         candidate_orders.append(cluster_seed)
@@ -1413,7 +1503,18 @@ def optimize_order(
             candidate_orders.append(energy_seed)
 
     for order in candidate_orders:
-        working = local_search(list(order), dist, two_opt_passes=two_opt_passes, objective_fn=objective_fn)
+        working = list(order)
+        if solver_mode == "hybrid":
+            working = anneal_refine(
+                working,
+                objective_fn=objective_fn,
+                rng=rng,
+                steps=max(0, anneal_steps),
+                temp_start=max(1e-6, anneal_temp_start),
+                temp_end=max(1e-6, anneal_temp_end),
+            )
+
+        working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_fn)
 
         if minimax_passes > 0:
             working = minimax_refine(working, dist, objective_fn=objective_fn, passes=minimax_passes)
@@ -1785,6 +1886,11 @@ def optimize_tracks(
     max_bpm_jump: Optional[float] = None,
     min_key_compatibility: Optional[float] = None,
     no_repeat_artist_within: int = 0,
+    solver_mode: str = "hybrid",
+    beam_width: int = 8,
+    anneal_steps: int = 140,
+    anneal_temp_start: float = 0.08,
+    anneal_temp_end: float = 0.004,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1880,6 +1986,11 @@ def optimize_tracks(
         energy_targets=energy_targets,
         minimax_passes=config.minimax_passes,
         genre_cluster_strength=config.genre_cluster_strength,
+        solver_mode=solver_mode,
+        beam_width=max(1, int(beam_width)),
+        anneal_steps=max(0, int(anneal_steps)),
+        anneal_temp_start=max(1e-6, float(anneal_temp_start)),
+        anneal_temp_end=max(1e-6, float(anneal_temp_end)),
     )
 
     order = apply_fixed_endpoints(

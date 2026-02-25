@@ -13,6 +13,7 @@ from backend.app import (
     apply_builtin_preset,
     edge_score_diff,
     transition_summary,
+    validate_optimize_payload,
 )
 
 
@@ -71,3 +72,14 @@ def test_edge_score_diff_reports_improvements_and_regressions():
     payload = edge_score_diff(baseline, candidate, max_edges=3)
     assert payload["most_improved"][0]["score_delta"] < 0
     assert payload["most_regressed"][0]["score_delta"] > 0
+
+
+def test_validate_optimize_payload_rejects_invalid_anneal_temps():
+    payload = OptimizeRequest(
+        playlist="abc123",
+        solver_mode="hybrid",
+        anneal_temp_start=0.01,
+        anneal_temp_end=0.02,
+    )
+    with pytest.raises(HTTPException):
+        validate_optimize_payload(payload)

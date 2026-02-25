@@ -173,6 +173,11 @@ export default function HomePage() {
   const [keyLockWindow, setKeyLockWindow] = useState(3);
   const [tempoRampWeight, setTempoRampWeight] = useState(0.08);
   const [minimaxPasses, setMinimaxPasses] = useState(2);
+  const [solverMode, setSolverMode] = useState<"classic" | "hybrid">("hybrid");
+  const [beamWidth, setBeamWidth] = useState(8);
+  const [annealSteps, setAnnealSteps] = useState(140);
+  const [annealTempStart, setAnnealTempStart] = useState(0.08);
+  const [annealTempEnd, setAnnealTempEnd] = useState(0.004);
   const [smoothnessWeight, setSmoothnessWeight] = useState(1);
   const [varietyWeight, setVarietyWeight] = useState(0);
   const [bpmWindow, setBpmWindow] = useState(0.08);
@@ -291,6 +296,11 @@ export default function HomePage() {
     setSmoothnessWeight(1);
     setVarietyWeight(0);
     setBpmWindow(0.08);
+    setSolverMode("hybrid");
+    setBeamWidth(8);
+    setAnnealSteps(140);
+    setAnnealTempStart(0.08);
+    setAnnealTempEnd(0.004);
     setMaxBpmJump(0);
     setMinKeyCompatibility(0);
     setNoRepeatArtistWithin(0);
@@ -316,6 +326,16 @@ export default function HomePage() {
         const safeSmoothnessWeight = Math.min(5, Math.max(0, smoothnessWeight || 0));
         const safeVarietyWeight = Math.min(5, Math.max(0, varietyWeight || 0));
         const safeBpmWindow = Math.min(0.5, Math.max(0.01, bpmWindow || 0.08));
+        const safeBeamWidth = Math.min(24, Math.max(1, Math.round(beamWidth || 8)));
+        const safeAnnealSteps = Math.min(1500, Math.max(0, Math.round(annealSteps || 0)));
+        const safeAnnealTempStart = Math.min(
+          2,
+          Math.max(0.0001, annealTempStart || 0.08)
+        );
+        const safeAnnealTempEnd = Math.min(
+          safeAnnealTempStart,
+          Math.max(0.0001, annealTempEnd || 0.004)
+        );
         const safeMaxBpmJump = Math.min(240, Math.max(0, maxBpmJump || 0));
         const safeMinKeyCompatibility = Math.min(
           1,
@@ -341,6 +361,11 @@ export default function HomePage() {
             key_lock_window: safeKeyLockWindow,
             tempo_ramp_weight: safeTempoRampWeight,
             minimax_passes: safeMinimaxPasses,
+            solver_mode: solverMode,
+            beam_width: safeBeamWidth,
+            anneal_steps: safeAnnealSteps,
+            anneal_temp_start: safeAnnealTempStart,
+            anneal_temp_end: safeAnnealTempEnd,
             smoothness_weight: safeSmoothnessWeight,
             variety_weight: safeVarietyWeight,
             bpm_window: safeBpmWindow,
@@ -499,6 +524,26 @@ export default function HomePage() {
             </button>
           </div>
 
+          <label>Solver mode</label>
+          <div className="segmented" role="group" aria-label="Solver mode">
+            <button
+              type="button"
+              className={`seg ${solverMode === "classic" ? "active" : ""}`}
+              onClick={() => setSolverMode("classic")}
+              aria-pressed={solverMode === "classic"}
+            >
+              Classic
+            </button>
+            <button
+              type="button"
+              className={`seg ${solverMode === "hybrid" ? "active" : ""}`}
+              onClick={() => setSolverMode("hybrid")}
+              aria-pressed={solverMode === "hybrid"}
+            >
+              Hybrid
+            </button>
+          </div>
+
           <div className="toggle">
             <input
               id="flow-curve"
@@ -577,6 +622,72 @@ export default function HomePage() {
                   )
                 }
               />
+            </div>
+
+            <div>
+              <label htmlFor="beam-width">Beam width</label>
+              <input
+                id="beam-width"
+                type="number"
+                min={1}
+                max={24}
+                step={1}
+                value={beamWidth}
+                onChange={(event) =>
+                  setBeamWidth(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 8
+                  )
+                }
+              />
+            </div>
+
+            <div>
+              <label htmlFor="anneal-steps">Anneal steps</label>
+              <input
+                id="anneal-steps"
+                type="number"
+                min={0}
+                max={1500}
+                step={10}
+                value={annealSteps}
+                onChange={(event) =>
+                  setAnnealSteps(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 140
+                  )
+                }
+              />
+            </div>
+
+            <div>
+              <label htmlFor="anneal-temp-start">Anneal start temp</label>
+              <input
+                id="anneal-temp-start"
+                type="range"
+                min={0.001}
+                max={0.3}
+                step={0.001}
+                value={annealTempStart}
+                onChange={(event) => setAnnealTempStart(Number(event.target.value))}
+              />
+              <div className="range-value">{annealTempStart.toFixed(3)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="anneal-temp-end">Anneal end temp</label>
+              <input
+                id="anneal-temp-end"
+                type="range"
+                min={0.001}
+                max={0.1}
+                step={0.001}
+                value={annealTempEnd}
+                onChange={(event) => setAnnealTempEnd(Number(event.target.value))}
+              />
+              <div className="range-value">{annealTempEnd.toFixed(3)}</div>
             </div>
 
             <div>
