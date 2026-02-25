@@ -653,6 +653,7 @@ def test_optimize_order_respects_max_solver_time_budget(monkeypatch):
     monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 0)
     calls = {"anneal": 0}
     original_anneal = core.anneal_refine
+    diagnostics = {}
 
     def wrapped_anneal(order, objective_fn, rng, steps, temp_start, temp_end):
         calls["anneal"] += 1
@@ -679,10 +680,13 @@ def test_optimize_order_respects_max_solver_time_budget(monkeypatch):
         anneal_temp_start=0.08,
         anneal_temp_end=0.004,
         max_solver_ms=2,
+        diagnostics=diagnostics,
     )
 
     assert sorted(order) == [0, 1, 2, 3, 4]
     assert calls["anneal"] == 1
+    assert diagnostics["time_budget_hit"] is True
+    assert diagnostics["candidate_processed"] >= 1
 
 
 def test_pick_start_indices_caps_restart_count_to_track_count():

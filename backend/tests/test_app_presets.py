@@ -27,6 +27,8 @@ from backend.app import (
     execute_transition_training,
     edge_score_diff,
     normalize_optimize_payload,
+    run_optimize_tracks_for_payload,
+    run_single_optimization,
     resolve_optimize_payload,
     transition_summary,
     validate_optimize_payload,
@@ -198,6 +200,93 @@ def test_validate_optimize_payload_rejects_invalid_anneal_temps():
     )
     with pytest.raises(HTTPException):
         validate_optimize_payload(payload)
+
+
+def test_run_optimize_tracks_for_payload_uses_default_solver_budget(monkeypatch):
+    captured: dict = {}
+
+    def fake_optimize_tracks(**kwargs):
+        captured.update(kwargs)
+        return "Playlist", [], 0.0, [], [], {"elapsed_ms": 1.0}
+
+    monkeypatch.setattr(app_module, "DEFAULT_MAX_SOLVER_MS", 4200)
+    monkeypatch.setattr(app_module, "optimize_tracks", fake_optimize_tracks)
+
+    payload = OptimizeRequest(playlist="abc123")
+    run_optimize_tracks_for_payload(
+        sp=object(),
+        payload=payload,
+        seed=42,
+        feedback_offsets={},
+        model_payload={},
+        cache_path="cache/audio_features.json",
+    )
+
+    assert captured.get("max_solver_ms") == 4200
+
+
+def test_run_single_optimization_includes_solver_diagnostics_when_debug_enabled(monkeypatch):
+    run_id = f"diag-{uuid.uuid4().hex[:8]}"
+    solver_diag = {"anneal_runs": 2, "elapsed_ms": 12.3}
+
+    monkeypatch.setattr(app_module, "OPTIMIZE_DIAGNOSTICS_DEBUG", True)
+    monkeypatch.setattr(app_module, "owner_feedback_offsets", lambda owner_id: {})
+    monkeypatch.setattr(app_module, "active_model_payload", lambda: {"version": None, "alpha": 0.0})
+    monkeypatch.setattr(app_module, "fetch_playlist_track_ids", lambda sp, playlist_id: ["t1", "t2"])
+    monkeypatch.setattr(app_module, "create_playlist_with_items", lambda **kwargs: "playlist123")
+    monkeypatch.setattr(
+        app_module,
+        "run_optimize_tracks_for_payload",
+        lambda **kwargs: ("abc123", "My Playlist", [], 0.123, [], [], solver_diag),
+    )
+
+    response = run_single_optimization(
+        sp=object(),
+        owner_id="tester",
+        payload=OptimizeRequest(playlist="abc123"),
+        seed=42,
+        run_id=run_id,
+    )
+
+    assert response["solver_diagnostics"] == solver_diag
+    assert RUN_HISTORY[run_id]["solver_diagnostics"] == solver_diag
+
+    snapshot_id = RUN_HISTORY[run_id].get("snapshot_id")
+    RUN_HISTORY.pop(run_id, None)
+    if snapshot_id:
+        app_module.SNAPSHOT_STORE.pop(snapshot_id, None)
+
+
+def test_run_single_optimization_hides_solver_diagnostics_when_debug_disabled(monkeypatch):
+    run_id = f"diag-{uuid.uuid4().hex[:8]}"
+    solver_diag = {"anneal_runs": 2, "elapsed_ms": 12.3}
+
+    monkeypatch.setattr(app_module, "OPTIMIZE_DIAGNOSTICS_DEBUG", False)
+    monkeypatch.setattr(app_module, "owner_feedback_offsets", lambda owner_id: {})
+    monkeypatch.setattr(app_module, "active_model_payload", lambda: {"version": None, "alpha": 0.0})
+    monkeypatch.setattr(app_module, "fetch_playlist_track_ids", lambda sp, playlist_id: ["t1", "t2"])
+    monkeypatch.setattr(app_module, "create_playlist_with_items", lambda **kwargs: "playlist123")
+    monkeypatch.setattr(
+        app_module,
+        "run_optimize_tracks_for_payload",
+        lambda **kwargs: ("abc123", "My Playlist", [], 0.123, [], [], solver_diag),
+    )
+
+    response = run_single_optimization(
+        sp=object(),
+        owner_id="tester",
+        payload=OptimizeRequest(playlist="abc123"),
+        seed=42,
+        run_id=run_id,
+    )
+
+    assert "solver_diagnostics" not in response
+    assert RUN_HISTORY[run_id]["solver_diagnostics"] == solver_diag
+
+    snapshot_id = RUN_HISTORY[run_id].get("snapshot_id")
+    RUN_HISTORY.pop(run_id, None)
+    if snapshot_id:
+        app_module.SNAPSHOT_STORE.pop(snapshot_id, None)
 
 
 def test_model_status_endpoint_requires_authentication(monkeypatch):
