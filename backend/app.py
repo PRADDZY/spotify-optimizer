@@ -134,6 +134,13 @@ class RollbackRequest(BaseModel):
     name: Optional[str] = None
 
 
+class BatchRequest(BaseModel):
+    playlists: list[str]
+    name_prefix: Optional[str] = None
+    public: bool = False
+    options: Optional[dict] = None
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -155,6 +162,7 @@ RUN_HISTORY: dict[str, dict] = {}
 COMPARISON_HISTORY: dict[str, dict] = {}
 PRESET_STORE: dict[str, dict] = {}
 SNAPSHOT_STORE: dict[str, dict] = {}
+BATCH_STORE: dict[str, dict] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -854,6 +862,140 @@ def rollback_snapshot(request: Request, snapshot_id: str, payload: RollbackReque
         "playlist_name": rollback_name,
         "playlist_url": f"https://open.spotify.com/playlist/{rollback_playlist_id}",
     }
+
+
+@app.post("/batch")
+def create_batch(request: Request, payload: BatchRequest):
+    if not payload.playlists:
+        raise HTTPException(status_code=400, detail="playlists list cannot be empty")
+
+    owner_id = current_owner_id(request)
+    batch_id = uuid.uuid4().hex
+    sp = spotify_for_session(request)
+    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
+    options = payload.options or {}
+    items = []
+
+    for index, playlist in enumerate(payload.playlists):
+        try:
+            cfg = dict(options)
+            cfg.pop("playlist", None)
+            cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
+            weights = cfg_payload.weights.model_dump() if cfg_payload.weights else {}
+            source_playlist_id = parse_playlist_id(cfg_payload.playlist)
+
+            playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+                sp=sp,
+                playlist_id=source_playlist_id,
+                cache_path=cache_path,
+                weights=weights,
+                bpm_window=cfg_payload.bpm_window,
+                restarts=cfg_payload.restarts,
+                two_opt_passes=cfg_payload.two_opt_passes,
+                missing=cfg_payload.missing,
+                seed=44 + index,
+                mix_mode=cfg_payload.mix_mode,
+                flow_curve=cfg_payload.flow_curve,
+                flow_profile=cfg_payload.flow_profile,
+                key_lock_window=cfg_payload.key_lock_window,
+                tempo_ramp_weight=cfg_payload.tempo_ramp_weight,
+                minimax_passes=cfg_payload.minimax_passes,
+                locked_first_track_id=cfg_payload.locked_first_track_id,
+                locked_last_track_id=cfg_payload.locked_last_track_id,
+                locked_blocks=cfg_payload.locked_blocks,
+                artist_gap=cfg_payload.artist_gap,
+                album_gap=cfg_payload.album_gap,
+                explicit_mode=cfg_payload.explicit_mode,
+                duration_target_sec=cfg_payload.duration_target_sec,
+                duration_tolerance_sec=cfg_payload.duration_tolerance_sec,
+                genre_cluster_strength=cfg_payload.genre_cluster_strength,
+                mood_curve_points=[point.model_dump() for point in cfg_payload.mood_curve_points or []],
+                bpm_guardrails=cfg_payload.bpm_guardrails or [],
+                harmonic_strict=cfg_payload.harmonic_strict,
+                transition_log_path=TRANSITION_LOG_PATH,
+            )
+
+            base_name = cfg_payload.name or playlist_name or f"Batch {index+1}"
+            if payload.name_prefix:
+                base_name = f"{payload.name_prefix}_{index+1}_{base_name}"
+            new_name = optimized_name(base_name)
+            ordered_ids = [track.id for track in ordered_tracks]
+            output_playlist_id = create_playlist_with_items(
+                sp=sp,
+                name=new_name,
+                public=payload.public,
+                track_ids=ordered_ids,
+                description=f"Batch optimized item {index+1}",
+            )
+
+            run_id = uuid.uuid4().hex
+            RUN_HISTORY[run_id] = {
+                "source_playlist_id": source_playlist_id,
+                "playlist_id": output_playlist_id,
+                "playlist_name": playlist_name,
+                "transition_score": round(cost, 4),
+                "roughest": roughest,
+                "transitions": explainability,
+                "request": cfg_payload.model_dump(),
+                "public": payload.public,
+                "batch_id": batch_id,
+                "created_at": time.time(),
+            }
+            items.append(
+                {
+                    "index": index,
+                    "status": "completed",
+                    "source_playlist_id": source_playlist_id,
+                    "run_id": run_id,
+                    "playlist_id": output_playlist_id,
+                    "playlist_name": new_name,
+                    "playlist_url": f"https://open.spotify.com/playlist/{output_playlist_id}",
+                    "transition_score": round(cost, 4),
+                }
+            )
+        except Exception as exc:
+            items.append(
+                {
+                    "index": index,
+                    "status": "failed",
+                    "source_playlist_id": parse_playlist_id(playlist),
+                    "error": str(exc),
+                }
+            )
+
+    BATCH_STORE[batch_id] = {
+        "owner_id": owner_id,
+        "status": "completed",
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "total": len(payload.playlists),
+        "completed": sum(1 for item in items if item.get("status") == "completed"),
+        "failed": sum(1 for item in items if item.get("status") == "failed"),
+        "items": items,
+    }
+    return {"batch_id": batch_id, **BATCH_STORE[batch_id]}
+
+
+@app.get("/batch/{batch_id}")
+def get_batch(request: Request, batch_id: str):
+    batch = BATCH_STORE.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="batch not found")
+    if batch.get("owner_id") != current_owner_id(request):
+        raise HTTPException(status_code=403, detail="forbidden")
+    data = dict(batch)
+    data.pop("items", None)
+    return {"batch_id": batch_id, **data}
+
+
+@app.get("/batch/{batch_id}/items")
+def get_batch_items(request: Request, batch_id: str):
+    batch = BATCH_STORE.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="batch not found")
+    if batch.get("owner_id") != current_owner_id(request):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return {"batch_id": batch_id, "items": batch.get("items", [])}
 
 
 @app.post("/optimize/{run_id}/quick-fix", response_model=OptimizeResponse)
