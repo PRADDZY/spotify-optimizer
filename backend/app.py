@@ -704,6 +704,9 @@ def run_events(run_id: str):
     def event_generator():
         cursor = 0
         idle_ticks = 0
+        yield "retry: 2000\n\n"
+        initial = json.dumps({"event": "stream_open", "run_id": run_id})
+        yield f"data: {initial}\n\n"
         while idle_ticks < 600:
             events = RUN_EVENT_BUFFERS.get(run_id, [])
             while cursor < len(events):
@@ -714,6 +717,9 @@ def run_events(run_id: str):
             status = RUN_TASK_STATUS.get(run_id, {})
             if status.get("status") in {"completed", "failed"} and cursor >= len(events):
                 break
+            if idle_ticks % 30 == 0:
+                heartbeat = json.dumps({"event": "heartbeat", "run_id": run_id, "cursor": cursor})
+                yield f"data: {heartbeat}\n\n"
             idle_ticks += 1
             time.sleep(0.5)
         end_payload = json.dumps({"event": "stream_end", "run_id": run_id})
