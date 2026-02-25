@@ -19,10 +19,13 @@ Last validated: 2026-02-26
   - solver time-budget support
   - targeted rough-edge repair pass
   - solver diagnostics persisted to run history
+- Operational test tooling now includes:
+  - `scripts/smoke_optimize_async.py` for end-to-end async optimize smoke checks
+  - `scripts/load_test_optimize.py` for concurrent optimize load checks
+  - `deploy/validate_vps.sh` for VPS service + endpoint validation
 
 ## Remaining Gaps Before "Absolutely Prod Ready"
 
-- Real Spotify integration smoke test in a staging environment is still required.
-- VPS deployment validation is still pending (service startup, TLS, reverse proxy, health checks).
-- Load/perf testing under concurrent optimize requests is not yet automated.
-- FastAPI startup/shutdown hooks still use deprecated `@app.on_event`; migrate to lifespan handlers.
+- Execute the new smoke/load/validate scripts against staging and capture baseline metrics.
+- Verify reverse-proxy/TLS behavior on the live VPS (request headers, timeouts, buffering) under load.
+- Add a repeatable pre-release runbook output (artifact/log retention for smoke + load results).

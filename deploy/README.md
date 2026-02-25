@@ -98,6 +98,14 @@ python scripts/load_test_optimize.py \
   --session-cookie "spotify_opt_sid=YOUR_SESSION_ID"
 ```
 
+6. Optional one-command VPS checks:
+
+```bash
+API_URL="https://api.your-domain.com" \
+APP_URL="https://app.your-domain.com" \
+bash deploy/validate_vps.sh
+```
+
 ## Redis Maintenance
 
 Optional daily Redis health/cleanup task:
