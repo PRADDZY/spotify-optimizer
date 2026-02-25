@@ -100,6 +100,9 @@ class OptimizeRequest(BaseModel):
     harmonic_strict: bool = False
     smoothness_weight: float = Field(1.0, ge=0.0, le=5.0)
     variety_weight: float = Field(0.0, ge=0.0, le=5.0)
+    max_bpm_jump: Optional[float] = Field(None, ge=0.0, le=240.0)
+    min_key_compatibility: Optional[float] = Field(None, ge=0.0, le=1.0)
+    no_repeat_artist_within: int = Field(0, ge=0, le=20)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -1190,6 +1193,9 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 feedback_offsets=feedback_offsets,
                 smoothness_weight=cfg_payload.smoothness_weight,
                 variety_weight=cfg_payload.variety_weight,
+                max_bpm_jump=cfg_payload.max_bpm_jump,
+                min_key_compatibility=cfg_payload.min_key_compatibility,
+                no_repeat_artist_within=cfg_payload.no_repeat_artist_within,
                 transition_log_path=TRANSITION_LOG_PATH,
             )
 
@@ -1318,6 +1324,9 @@ def run_single_optimization(
         feedback_offsets=feedback_offsets,
         smoothness_weight=payload.smoothness_weight,
         variety_weight=payload.variety_weight,
+        max_bpm_jump=payload.max_bpm_jump,
+        min_key_compatibility=payload.min_key_compatibility,
+        no_repeat_artist_within=payload.no_repeat_artist_within,
         transition_log_path=TRANSITION_LOG_PATH,
     )
     emit_run_event(run_id, "search", 65, "Optimization complete", {"transitions": len(explainability)})
@@ -1717,6 +1726,9 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         feedback_offsets=feedback_offsets,
         smoothness_weight=replay.smoothness_weight,
         variety_weight=replay.variety_weight,
+        max_bpm_jump=replay.max_bpm_jump,
+        min_key_compatibility=replay.min_key_compatibility,
+        no_repeat_artist_within=replay.no_repeat_artist_within,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 

@@ -92,6 +92,9 @@ export default function HomePage() {
   const [smoothnessWeight, setSmoothnessWeight] = useState(1);
   const [varietyWeight, setVarietyWeight] = useState(0);
   const [bpmWindow, setBpmWindow] = useState(0.08);
+  const [maxBpmJump, setMaxBpmJump] = useState(0);
+  const [minKeyCompatibility, setMinKeyCompatibility] = useState(0);
+  const [noRepeatArtistWithin, setNoRepeatArtistWithin] = useState(0);
   const [weights, setWeights] = useState<WeightState>({ ...DEFAULT_WEIGHTS });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -130,6 +133,9 @@ export default function HomePage() {
     setSmoothnessWeight(1);
     setVarietyWeight(0);
     setBpmWindow(0.08);
+    setMaxBpmJump(0);
+    setMinKeyCompatibility(0);
+    setNoRepeatArtistWithin(0);
   };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -152,6 +158,15 @@ export default function HomePage() {
         const safeSmoothnessWeight = Math.min(5, Math.max(0, smoothnessWeight || 0));
         const safeVarietyWeight = Math.min(5, Math.max(0, varietyWeight || 0));
         const safeBpmWindow = Math.min(0.5, Math.max(0.01, bpmWindow || 0.08));
+        const safeMaxBpmJump = Math.min(240, Math.max(0, maxBpmJump || 0));
+        const safeMinKeyCompatibility = Math.min(
+          1,
+          Math.max(0, minKeyCompatibility || 0)
+        );
+        const safeNoRepeatArtistWithin = Math.min(
+          20,
+          Math.max(0, Math.round(noRepeatArtistWithin || 0))
+        );
 
         const response = await fetch(`${apiBase}/optimize`, {
           method: "POST",
@@ -170,6 +185,11 @@ export default function HomePage() {
             smoothness_weight: safeSmoothnessWeight,
             variety_weight: safeVarietyWeight,
             bpm_window: safeBpmWindow,
+            max_bpm_jump: safeMaxBpmJump > 0 ? safeMaxBpmJump : undefined,
+            min_key_compatibility:
+              safeMinKeyCompatibility > 0 ? safeMinKeyCompatibility : undefined,
+            no_repeat_artist_within:
+              safeNoRepeatArtistWithin > 0 ? safeNoRepeatArtistWithin : 0,
             weights,
           }),
         });
@@ -388,6 +408,58 @@ export default function HomePage() {
                 onChange={(event) => setBpmWindow(Number(event.target.value))}
               />
               <div className="range-value">{bpmWindow.toFixed(2)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="max-bpm-jump">Max BPM jump (hard)</label>
+              <input
+                id="max-bpm-jump"
+                type="number"
+                min={0}
+                max={240}
+                step={1}
+                value={maxBpmJump}
+                onChange={(event) =>
+                  setMaxBpmJump(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 0
+                  )
+                }
+              />
+            </div>
+
+            <div>
+              <label htmlFor="min-key-compatibility">Min key compatibility</label>
+              <input
+                id="min-key-compatibility"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={minKeyCompatibility}
+                onChange={(event) => setMinKeyCompatibility(Number(event.target.value))}
+              />
+              <div className="range-value">{minKeyCompatibility.toFixed(2)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="no-repeat-artist-within">No repeat artist within</label>
+              <input
+                id="no-repeat-artist-within"
+                type="number"
+                min={0}
+                max={20}
+                step={1}
+                value={noRepeatArtistWithin}
+                onChange={(event) =>
+                  setNoRepeatArtistWithin(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 0
+                  )
+                }
+              />
             </div>
           </div>
 

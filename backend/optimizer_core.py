@@ -133,6 +133,9 @@ class OptimizationConfig:
     harmonic_strict: bool = False
     smoothness_weight: float = 1.0
     variety_weight: float = 0.0
+    max_bpm_jump: Optional[float] = None
+    min_key_compatibility: Optional[float] = None
+    no_repeat_artist_within: int = 0
 
 
 def parse_playlist_id(value: str) -> str:
@@ -902,6 +905,68 @@ def variety_penalty(order: List[int], tracks: List[Track]) -> float:
     return (same_artist_adjacent * 0.7 + same_genre_adjacent * 0.3) / max(1.0, total)
 
 
+def hard_constraint_penalty(
+    order: List[int],
+    tracks: List[Track],
+    max_bpm_jump: Optional[float],
+    min_key_compatibility: Optional[float],
+    no_repeat_artist_within: int,
+) -> float:
+    if len(order) < 2:
+        return 0.0
+
+    checks = 0.0
+    violations = 0.0
+
+    for i in range(len(order) - 1):
+        left = tracks[order[i]]
+        right = tracks[order[i + 1]]
+        f1 = left.features or {}
+        f2 = right.features or {}
+
+        if max_bpm_jump is not None and max_bpm_jump > 0:
+            tempo_a = f1.get("tempo")
+            tempo_b = f2.get("tempo")
+            if tempo_a is not None and tempo_b is not None:
+                checks += 1.0
+                jump = abs(float(tempo_a) - float(tempo_b))
+                if jump > max_bpm_jump:
+                    violations += (jump - max_bpm_jump) / max(1.0, max_bpm_jump)
+
+        if min_key_compatibility is not None:
+            checks += 1.0
+            compatibility = 1.0 - key_distance(
+                f1.get("key"),
+                f1.get("mode"),
+                f2.get("key"),
+                f2.get("mode"),
+            )
+            if compatibility < min_key_compatibility:
+                violations += (min_key_compatibility - compatibility) / max(0.05, min_key_compatibility)
+
+    if no_repeat_artist_within > 0:
+        for i in range(len(order)):
+            left = tracks[order[i]]
+            left_artist = left.artist_ids[0] if left.artist_ids else (left.artists or "")
+            if not left_artist:
+                continue
+            for step in range(1, no_repeat_artist_within + 1):
+                j = i + step
+                if j >= len(order):
+                    break
+                right = tracks[order[j]]
+                right_artist = right.artist_ids[0] if right.artist_ids else (right.artists or "")
+                if not right_artist:
+                    continue
+                checks += 1.0
+                if left_artist == right_artist:
+                    violations += (no_repeat_artist_within + 1 - step) / (no_repeat_artist_within + 1)
+
+    if checks <= 0:
+        return 0.0
+    return violations / checks
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -949,6 +1014,18 @@ def order_cost(
         cost += 0.11 * bpm_guardrail_penalty(order, tracks, config.bpm_guardrails)
     if config.harmonic_strict:
         cost += 0.35 * harmonic_strict_penalty(order, tracks)
+    if (
+        config.max_bpm_jump is not None
+        or config.min_key_compatibility is not None
+        or config.no_repeat_artist_within > 0
+    ):
+        cost += 2.4 * hard_constraint_penalty(
+            order,
+            tracks,
+            max_bpm_jump=config.max_bpm_jump,
+            min_key_compatibility=config.min_key_compatibility,
+            no_repeat_artist_within=config.no_repeat_artist_within,
+        )
 
     if config.variety_weight > 0:
         return config.smoothness_weight * cost + config.variety_weight * variety_penalty(order, tracks)
@@ -1679,6 +1756,9 @@ def optimize_tracks(
     feedback_offsets: Optional[Dict[str, float]] = None,
     smoothness_weight: float = 1.0,
     variety_weight: float = 0.0,
+    max_bpm_jump: Optional[float] = None,
+    min_key_compatibility: Optional[float] = None,
+    no_repeat_artist_within: int = 0,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1720,6 +1800,11 @@ def optimize_tracks(
         harmonic_strict=bool(harmonic_strict),
         smoothness_weight=max(0.0, float(smoothness_weight)),
         variety_weight=max(0.0, float(variety_weight)),
+        max_bpm_jump=float(max_bpm_jump) if max_bpm_jump is not None else None,
+        min_key_compatibility=float(min_key_compatibility)
+        if min_key_compatibility is not None
+        else None,
+        no_repeat_artist_within=max(0, int(no_repeat_artist_within)),
     )
 
     energy_targets: Optional[List[float]] = None
