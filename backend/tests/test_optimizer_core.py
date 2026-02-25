@@ -758,3 +758,45 @@ def test_optimize_order_uses_adaptive_anneal_steps(monkeypatch):
     expected = resolve_anneal_steps(base_steps=120, track_count=len(dist))
     assert calls
     assert all(value == expected for value in calls)
+
+
+def test_optimize_order_populates_solver_diagnostics(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.8, 0.5],
+        [0.2, 0.0, 0.3, 0.9],
+        [0.8, 0.3, 0.0, 0.2],
+        [0.5, 0.9, 0.2, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 8)
+    diagnostics: dict = {}
+    order, _ = core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=4,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=1,
+        solver_mode="classic",
+        beam_width=4,
+        anneal_steps=120,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+        diagnostics=diagnostics,
+    )
+
+    assert sorted(order) == [0, 1, 2, 3]
+    assert diagnostics["candidate_total"] >= diagnostics["candidate_unique"] >= diagnostics["candidate_processed"]
+    assert diagnostics["used_exact_seed"] is True
+    assert diagnostics["effective_anneal_steps"] > 0
+    assert diagnostics["elapsed_ms"] >= 0.0

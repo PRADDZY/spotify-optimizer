@@ -1808,6 +1808,7 @@ def optimize_order(
     anneal_temp_start: float = 0.08,
     anneal_temp_end: float = 0.004,
     max_solver_ms: Optional[int] = None,
+    diagnostics: Optional[Dict[str, float]] = None,
 ) -> Tuple[List[int], float]:
     n = len(dist)
     if n == 0:
@@ -1820,6 +1821,11 @@ def optimize_order(
     best_cost = math.inf
     objective_eval = memoize_order_objective(objective_fn)
     effective_anneal_steps = resolve_anneal_steps(max(0, int(anneal_steps)), n)
+    started_at = time.perf_counter()
+    anneal_runs = 0
+    processed_candidates = 0
+    time_budget_hit = False
+    used_exact_seed = False
     deadline: Optional[float] = None
     if max_solver_ms is not None and max_solver_ms > 0:
         deadline = time.perf_counter() + (float(max_solver_ms) / 1000.0)
@@ -1835,6 +1841,7 @@ def optimize_order(
 
     if EXACT_SOLVER_MAX_N > 1 and n <= EXACT_SOLVER_MAX_N:
         candidate_orders.append(exact_path_order(dist))
+        used_exact_seed = True
 
     if solver_mode == "hybrid":
         beam_starts = starts[: max(2, min(5, beam_width))]
@@ -1855,12 +1862,15 @@ def optimize_order(
         if energy_seed:
             candidate_orders.append(energy_seed)
 
-    for order in dedupe_candidate_orders(candidate_orders):
+    unique_orders = dedupe_candidate_orders(candidate_orders)
+    for order in unique_orders:
         if time_budget_exceeded() and best_order is not None:
+            time_budget_hit = True
             break
 
         working = list(order)
         if solver_mode == "hybrid" and not time_budget_exceeded():
+            anneal_runs += 1
             working = anneal_refine(
                 working,
                 objective_fn=objective_eval,
@@ -1889,10 +1899,25 @@ def optimize_order(
         if cost < best_cost:
             best_cost = cost
             best_order = list(working)
+        processed_candidates += 1
 
     if best_order is None:
         best_order = list(range(n))
         best_cost = objective_eval(best_order)
+
+    if diagnostics is not None:
+        diagnostics.update(
+            {
+                "candidate_total": len(candidate_orders),
+                "candidate_unique": len(unique_orders),
+                "candidate_processed": processed_candidates,
+                "anneal_runs": anneal_runs,
+                "effective_anneal_steps": effective_anneal_steps,
+                "time_budget_hit": bool(time_budget_hit),
+                "used_exact_seed": bool(used_exact_seed),
+                "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 3),
+            }
+        )
 
     return best_order, best_cost
 
