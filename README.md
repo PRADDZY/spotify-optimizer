@@ -112,7 +112,7 @@ Backend: `http://localhost:8000`
 - Use `Idempotency-Key` request header on `POST /optimize` and `POST /optimize/async` to avoid duplicate runs.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
 - `/metrics` exposes Prometheus-compatible metrics.
-- A versioned transition model can be trained from explicit feedback labels via `POST /model/train` and inspected via `GET /model/status`.
+- A versioned transition model can be trained asynchronously from explicit feedback labels via `POST /model/train` and tracked via `GET /model/train/{job_id}`; active model metadata is available at `GET /model/status`.
 - Active model blending is controlled by `MODEL_BLEND_ALPHA`; artifacts are stored under `MODEL_DIR`.
 - `/model/*` endpoints are locked down and require an authenticated model-admin user; set `MODEL_ADMIN_USER_IDS` in production.
 - Model endpoints use dedicated rate limits (`RATE_LIMIT_MODEL_STATUS`, `RATE_LIMIT_MODEL_WRITE`) in addition to global limits.
