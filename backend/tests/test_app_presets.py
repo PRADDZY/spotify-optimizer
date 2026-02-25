@@ -13,15 +13,21 @@ os.environ.setdefault("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
 import backend.app as app_module
 from backend.app import (
     BUILTIN_PRESETS,
+    MODEL_REGISTRY,
+    MODEL_STATE,
+    MODEL_DIR,
     app,
     SESSION_COOKIE,
     STORE,
     OptimizeRequest,
     apply_builtin_preset,
+    execute_transition_training,
     edge_score_diff,
     transition_summary,
     validate_optimize_payload,
 )
+from backend.model_store import save_model_artifact
+from backend.modeling import MODEL_FEATURE_KEYS, TransitionModel
 
 
 def make_authenticated_client(user_id: str = "tester") -> TestClient:
@@ -52,6 +58,13 @@ def wait_for_training_job(client: TestClient, job_id: str, timeout_seconds: floa
             return payload
         time.sleep(0.05)
     return last_payload
+
+
+def clear_model_state() -> None:
+    for version, _ in list(MODEL_REGISTRY.items()):
+        MODEL_REGISTRY.pop(version, None)
+    MODEL_STATE.pop("active_version", None)
+    MODEL_STATE.pop("last_auto_train_at", None)
 
 
 def test_apply_builtin_preset_populates_profile_defaults():
@@ -144,6 +157,7 @@ def test_model_status_endpoint_returns_expected_shape_for_admin(monkeypatch):
     payload = response.json()
     assert "active_version" in payload
     assert "available_versions" in payload
+    assert "quality_gate_thresholds" in payload
 
 
 def test_model_train_endpoint_returns_graceful_response_when_data_is_small(monkeypatch):
@@ -177,3 +191,72 @@ def test_model_train_status_rejects_non_admin(monkeypatch):
     job_id = response.json()["job_id"]
     forbidden = normal_client.get(f"/model/train/{job_id}")
     assert forbidden.status_code == 403
+
+
+def test_execute_transition_training_blocks_activation_when_quality_gate_fails(monkeypatch):
+    clear_model_state()
+    monkeypatch.setattr(app_module, "MODEL_MIN_ACCURACY", 0.9)
+    monkeypatch.setattr(app_module, "MODEL_MAX_LOSS", 0.2)
+    version = f"transition_gate_{uuid.uuid4().hex[:8]}"
+
+    def fake_train(*args, **kwargs):
+        model = TransitionModel(
+            version=version,
+            weights={key: 0.01 for key in MODEL_FEATURE_KEYS},
+            bias=0.0,
+            trained_at=time.time(),
+            sample_count=64,
+        )
+        details = {
+            "trained": True,
+            "sample_count": 64,
+            "metrics": {"accuracy": 0.78, "loss": 0.44},
+            "validation_metrics": {"accuracy": 0.48, "loss": 0.83},
+            "positive_ratio": 0.4,
+            "version": version,
+        }
+        return model, details
+
+    monkeypatch.setattr(app_module, "train_transition_model_from_feedback", fake_train)
+
+    result = execute_transition_training(owner_id=None, min_samples=10, activate=True)
+
+    assert result["trained"] is True
+    assert result["activated"] is False
+    assert result["quality_gate"]["passed"] is False
+    assert MODEL_STATE.get("active_version") != version
+    clear_model_state()
+
+
+def test_model_activate_endpoint_rejects_versions_that_fail_quality_gate(monkeypatch):
+    clear_model_state()
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    monkeypatch.setattr(app_module, "MODEL_MIN_ACCURACY", 0.8)
+    monkeypatch.setattr(app_module, "MODEL_MAX_LOSS", 0.3)
+
+    version = f"transition_gate_{uuid.uuid4().hex[:8]}"
+    artifact_path = save_model_artifact(
+        MODEL_DIR,
+        TransitionModel(
+            version=version,
+            weights={key: 0.01 for key in MODEL_FEATURE_KEYS},
+            bias=0.0,
+            trained_at=time.time(),
+            sample_count=80,
+        ).to_dict(),
+    )
+    MODEL_REGISTRY[version] = {
+        "artifact_path": artifact_path,
+        "owner_scope": "all",
+        "metrics": {"accuracy": 0.6, "loss": 0.45},
+        "validation_metrics": {"accuracy": 0.52, "loss": 0.56},
+        "sample_count": 80,
+        "created_at": time.time(),
+    }
+
+    client = make_authenticated_client("admin-user")
+    response = client.post(f"/model/activate/{version}")
+    assert response.status_code == 409
+    assert "quality gate failed" in response.json().get("detail", "")
+
+    clear_model_state()
