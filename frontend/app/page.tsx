@@ -40,6 +40,28 @@ type TransitionDiagnostics = {
   transitions?: TransitionDetail[];
 };
 
+type CompareEdgeDiff = {
+  index: number;
+  baseline_score: number;
+  candidate_score: number;
+  score_delta: number;
+  baseline_edge: { from_track?: string; to_track?: string; reason_code?: string };
+  candidate_edge: { from_track?: string; to_track?: string; reason_code?: string };
+};
+
+type CompareResult = {
+  comparison_id: string;
+  baseline_run_id: string;
+  candidate_run_id: string;
+  delta: {
+    mean_edge_score_delta: number;
+    max_edge_score_delta: number;
+    transition_score_delta: number;
+  };
+  most_improved?: CompareEdgeDiff[];
+  most_regressed?: CompareEdgeDiff[];
+};
+
 type Profile = {
   id: string;
   display_name: string;
@@ -162,10 +184,16 @@ export default function HomePage() {
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [result, setResult] = useState<OptimizeResult | null>(null);
+  const [recentRuns, setRecentRuns] = useState<string[]>([]);
   const [transitionSummary, setTransitionSummary] =
     useState<TransitionDiagnostics["summary"]>();
   const [transitionDetails, setTransitionDetails] = useState<TransitionDetail[]>([]);
   const [selectedTransitionIndex, setSelectedTransitionIndex] = useState(0);
+  const [compareBaselineRunId, setCompareBaselineRunId] = useState("");
+  const [compareCandidateRunId, setCompareCandidateRunId] = useState("");
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
+  const [compareError, setCompareError] = useState("");
+  const [isComparing, setIsComparing] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -222,6 +250,20 @@ export default function HomePage() {
       .catch(() => undefined);
     return () => controller.abort();
   }, [apiBase, result?.run_id]);
+
+  useEffect(() => {
+    if (!result?.run_id) {
+      return;
+    }
+    setRecentRuns((prev) => {
+      const next = [result.run_id, ...prev.filter((id) => id !== result.run_id)];
+      return next.slice(0, 12);
+    });
+    setCompareCandidateRunId(result.run_id);
+    if (!compareBaselineRunId) {
+      setCompareBaselineRunId(result.run_id);
+    }
+  }, [result?.run_id, compareBaselineRunId]);
 
   const handleConnect = () => {
     window.location.href = `${apiBase}/login`;
@@ -330,6 +372,39 @@ export default function HomePage() {
         setError("Failed to reach the optimizer. Is the API running?");
       }
     });
+  };
+
+  const handleCompareRuns = async () => {
+    if (!compareBaselineRunId || !compareCandidateRunId) {
+      setCompareError("Pick both baseline and candidate run IDs.");
+      return;
+    }
+    setCompareError("");
+    setCompareResult(null);
+    setIsComparing(true);
+    try {
+      const response = await fetch(`${apiBase}/compare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          baseline_run_id: compareBaselineRunId,
+          candidate_run_id: compareCandidateRunId,
+          include_edge_diff: true,
+          max_edges: 8,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setCompareError(payload?.detail ?? "Compare failed.");
+        return;
+      }
+      setCompareResult(payload);
+    } catch {
+      setCompareError("Failed to compare runs.");
+    } finally {
+      setIsComparing(false);
+    }
   };
 
   return (
@@ -731,6 +806,76 @@ export default function HomePage() {
               tempo ramp shaping, objective weights, and minimax passes that
               target rough edges.
             </p>
+          </div>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>A/B Compare Runs</h2>
+            <label htmlFor="compare-baseline">Baseline run</label>
+            <select
+              id="compare-baseline"
+              value={compareBaselineRunId}
+              onChange={(event) => setCompareBaselineRunId(event.target.value)}
+            >
+              <option value="">Select baseline run</option>
+              {recentRuns.map((runId) => (
+                <option key={`base-${runId}`} value={runId}>
+                  {runId}
+                </option>
+              ))}
+            </select>
+
+            <label htmlFor="compare-candidate">Candidate run</label>
+            <select
+              id="compare-candidate"
+              value={compareCandidateRunId}
+              onChange={(event) => setCompareCandidateRunId(event.target.value)}
+            >
+              <option value="">Select candidate run</option>
+              {recentRuns.map((runId) => (
+                <option key={`cand-${runId}`} value={runId}>
+                  {runId}
+                </option>
+              ))}
+            </select>
+            <div className="button-row">
+              <button
+                type="button"
+                className="secondary"
+                onClick={handleCompareRuns}
+                disabled={isComparing}
+              >
+                {isComparing ? "Comparing..." : "Compare"}
+              </button>
+            </div>
+            {compareError && <div className="status">{compareError}</div>}
+            {compareResult && (
+              <div className="result">
+                <div className="list">
+                  <div className="list-item">
+                    Mean edge delta: {compareResult.delta.mean_edge_score_delta.toFixed(4)}
+                  </div>
+                  <div className="list-item">
+                    Max edge delta: {compareResult.delta.max_edge_score_delta.toFixed(4)}
+                  </div>
+                  <div className="list-item">
+                    Transition delta: {compareResult.delta.transition_score_delta.toFixed(4)}
+                  </div>
+                </div>
+                {!!compareResult.most_improved?.length && (
+                  <div className="status">
+                    Top improved: {compareResult.most_improved[0].baseline_edge.from_track} {"->"}{" "}
+                    {compareResult.most_improved[0].baseline_edge.to_track} (
+                    {compareResult.most_improved[0].score_delta.toFixed(4)})
+                  </div>
+                )}
+                {!!compareResult.most_regressed?.length && (
+                  <div className="status">
+                    Top regressed: {compareResult.most_regressed[0].baseline_edge.from_track} {"->"}{" "}
+                    {compareResult.most_regressed[0].baseline_edge.to_track} (
+                    {compareResult.most_regressed[0].score_delta.toFixed(4)})
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Keep in Mind</h2>
