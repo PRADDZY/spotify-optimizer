@@ -6,6 +6,7 @@ from backend.optimizer_core import (
     apply_fixed_endpoints,
     apply_locked_blocks,
     apply_explicit_filter,
+    apply_duration_target,
     append_transition_log,
     build_energy_curve,
     minimax_refine,
@@ -169,6 +170,21 @@ def test_explicit_filter_removes_explicit_tracks_in_clean_only_mode():
     filtered = apply_explicit_filter([clean, explicit], "clean_only")
     assert len(filtered) == 1
     assert filtered[0].id == clean.id
+
+
+def test_duration_target_drops_long_tracks_to_fit_upper_bound():
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.4, 110.0),
+        make_track("c-1", 0.6, 120.0),
+    ]
+    tracks[0].duration_ms = 240000
+    tracks[1].duration_ms = 220000
+    tracks[2].duration_ms = 180000
+    trimmed = apply_duration_target(tracks, duration_target_sec=420, duration_tolerance_sec=0)
+    total = sum(track.duration_ms for track in trimmed) / 1000
+    assert total <= 420
+    assert len(trimmed) == 2
 
 
 def test_album_gap_penalty_prefers_spaced_albums():

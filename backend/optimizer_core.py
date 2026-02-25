@@ -1229,6 +1229,36 @@ def apply_explicit_filter(tracks: List[Track], explicit_mode: str) -> List[Track
     return [track for track in tracks if not track.explicit]
 
 
+def apply_duration_target(
+    tracks: List[Track],
+    duration_target_sec: Optional[int],
+    duration_tolerance_sec: int,
+) -> List[Track]:
+    if not tracks or not duration_target_sec or duration_target_sec <= 0:
+        return tracks
+
+    upper_bound = duration_target_sec + max(0, duration_tolerance_sec)
+    current = list(tracks)
+    total_sec = sum((track.duration_ms or 0) for track in current) / 1000.0
+    if total_sec <= upper_bound:
+        return current
+
+    # Drop the longest tracks first to get near the upper bound while preserving order.
+    indexed = list(enumerate(current))
+    indexed.sort(key=lambda item: item[1].duration_ms or 0, reverse=True)
+    dropped: set[int] = set()
+
+    for index, track in indexed:
+        if len(current) - len(dropped) <= 2:
+            break
+        if total_sec <= upper_bound:
+            break
+        total_sec -= (track.duration_ms or 0) / 1000.0
+        dropped.add(index)
+
+    return [track for i, track in enumerate(current) if i not in dropped]
+
+
 def transition_record(from_track: Track, to_track: Track, score: float, index: int) -> Dict:
     from_features = from_track.features or {}
     to_features = to_track.features or {}
@@ -1333,6 +1363,8 @@ def optimize_tracks(
     artist_gap: int = 0,
     album_gap: int = 0,
     explicit_mode: str = "allow",
+    duration_target_sec: Optional[int] = None,
+    duration_tolerance_sec: int = 90,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1342,6 +1374,11 @@ def optimize_tracks(
     enrich_audio_features(sp, tracks, cache_path)
 
     filtered_tracks = apply_explicit_filter(tracks, explicit_mode)
+    filtered_tracks = apply_duration_target(
+        filtered_tracks,
+        duration_target_sec=duration_target_sec,
+        duration_tolerance_sec=duration_tolerance_sec,
+    )
     with_features = [t for t in filtered_tracks if track_has_essential_features(t.features)]
     missing_tracks = [t for t in filtered_tracks if not track_has_essential_features(t.features)]
 

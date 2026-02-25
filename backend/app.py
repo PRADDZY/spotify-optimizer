@@ -72,6 +72,8 @@ class OptimizeRequest(BaseModel):
     artist_gap: int = Field(0, ge=0, le=20)
     album_gap: int = Field(0, ge=0, le=20)
     explicit_mode: str = "allow"
+    duration_target_sec: Optional[int] = Field(None, ge=60, le=43200)
+    duration_tolerance_sec: int = Field(90, ge=0, le=1800)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -520,6 +522,8 @@ def optimize(request: Request, payload: OptimizeRequest):
         artist_gap=payload.artist_gap,
         album_gap=payload.album_gap,
         explicit_mode=payload.explicit_mode,
+        duration_target_sec=payload.duration_target_sec,
+        duration_tolerance_sec=payload.duration_tolerance_sec,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
