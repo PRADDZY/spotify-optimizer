@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import os
 import secrets
@@ -69,6 +70,7 @@ MODEL_MAX_LOSS = float(os.getenv("MODEL_MAX_LOSS", "0.72"))
 MODEL_MIN_ACCURACY_DELTA = float(os.getenv("MODEL_MIN_ACCURACY_DELTA", "0.0"))
 MODEL_MAX_LOSS_DELTA = float(os.getenv("MODEL_MAX_LOSS_DELTA", "0.0"))
 MODEL_EVAL_WINDOW_DAYS = int(os.getenv("MODEL_EVAL_WINDOW_DAYS", "30"))
+OPTIMIZE_CONFIG_HASH_DEBUG = os.getenv("OPTIMIZE_CONFIG_HASH_DEBUG", "false").lower() == "true"
 MODEL_ADMIN_USER_IDS = {
     value.strip()
     for value in os.getenv("MODEL_ADMIN_USER_IDS", "").split(",")
@@ -1300,6 +1302,35 @@ def apply_builtin_preset(payload: OptimizeRequest) -> OptimizeRequest:
     return OptimizeRequest(**merged)
 
 
+def normalize_optimize_payload(payload: OptimizeRequest) -> OptimizeRequest:
+    data = payload.model_dump()
+    data["bpm_guardrails"] = sorted({float(value) for value in (data.get("bpm_guardrails") or []) if float(value) > 0})
+    data["locked_blocks"] = data.get("locked_blocks") or None
+
+    mood_points = data.get("mood_curve_points") or []
+    if mood_points:
+        data["mood_curve_points"] = sorted(
+            mood_points,
+            key=lambda point: (float(point.get("position", 0.0)), float(point.get("energy", 0.0))),
+        )
+    return OptimizeRequest(**data)
+
+
+def build_optimize_config_hash(payload: OptimizeRequest) -> str:
+    normalized = normalize_optimize_payload(payload)
+    raw = normalized.model_dump()
+    raw.pop("name", None)
+    encoded = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def resolve_optimize_payload(payload: OptimizeRequest) -> OptimizeRequest:
+    resolved = apply_builtin_preset(payload)
+    resolved = normalize_optimize_payload(resolved)
+    validate_optimize_payload(resolved)
+    return resolved
+
+
 def validate_optimize_payload(payload: OptimizeRequest) -> None:
     if payload.missing not in {"append", "drop"}:
         raise HTTPException(status_code=400, detail="missing must be append or drop")
@@ -1331,8 +1362,7 @@ def list_builtin_presets():
 @app.post("/optimize", response_model=OptimizeResponse)
 @limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize(request: Request, payload: OptimizeRequest):
-    payload = apply_builtin_preset(payload)
-    validate_optimize_payload(payload)
+    payload = resolve_optimize_payload(payload)
 
     owner_id = current_owner_id(request)
     cached = get_idempotency_response(owner_id, "optimize", request)
@@ -1358,7 +1388,7 @@ def async_optimize_job(run_id: str, sid: str, owner_id: str, payload_dict: dict)
         sp = spotify_for_sid(sid)
         if not sp:
             raise RuntimeError("session expired or missing for async run")
-        payload = apply_builtin_preset(OptimizeRequest(**payload_dict))
+        payload = resolve_optimize_payload(OptimizeRequest(**payload_dict))
         result = run_single_optimization(
             sp=sp,
             owner_id=owner_id,
@@ -1385,8 +1415,7 @@ def async_optimize_job(run_id: str, sid: str, owner_id: str, payload_dict: dict)
 @app.post("/optimize/async")
 @limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize_async(request: Request, payload: OptimizeRequest):
-    payload = apply_builtin_preset(payload)
-    validate_optimize_payload(payload)
+    payload = resolve_optimize_payload(payload)
     sid = get_session_id(request)
     if not sid:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -2078,8 +2107,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
             cfg = dict(options)
             cfg.pop("playlist", None)
             cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
-            cfg_payload = apply_builtin_preset(cfg_payload)
-            validate_optimize_payload(cfg_payload)
+            cfg_payload = resolve_optimize_payload(cfg_payload)
             source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
                 sp=sp,
                 payload=cfg_payload,
@@ -2088,6 +2116,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 model_payload=model_payload,
                 cache_path=cache_path,
             )
+            config_hash = build_optimize_config_hash(cfg_payload)
 
             base_name = cfg_payload.name or playlist_name or f"Batch {index+1}"
             if payload.name_prefix:
@@ -2111,6 +2140,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 "roughest": roughest,
                 "transitions": explainability,
                 "request": cfg_payload.model_dump(),
+                "config_hash": config_hash,
                 "public": payload.public,
                 "batch_id": batch_id,
                 "model_version": model_payload.get("version"),
@@ -2128,6 +2158,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                     "playlist_url": f"https://open.spotify.com/playlist/{output_playlist_id}",
                     "transition_score": round(cost, 4),
                     "model_version": model_payload.get("version"),
+                    "config_hash": config_hash,
                 }
             )
         except Exception as exc:
@@ -2178,6 +2209,7 @@ def run_single_optimization(
 ) -> dict:
     run_id = run_id or uuid.uuid4().hex
     emit_run_event(run_id, "start", 2, "Starting optimization")
+    config_hash = build_optimize_config_hash(payload)
 
     feedback_offsets = owner_feedback_offsets(owner_id)
     model_payload = active_model_payload()
@@ -2229,6 +2261,7 @@ def run_single_optimization(
         "roughest": roughest,
         "transitions": explainability,
         "request": payload.model_dump(),
+        "config_hash": config_hash,
         "public": payload.public,
         "snapshot_id": snapshot_id,
         "parent_run_id": parent_run_id,
@@ -2238,7 +2271,7 @@ def run_single_optimization(
     }
 
     emit_run_event(run_id, "done", 100, "Run completed", {"snapshot_id": snapshot_id})
-    return {
+    response_payload = {
         "run_id": run_id,
         "playlist_id": playlist_id,
         "playlist_name": new_name,
@@ -2247,6 +2280,9 @@ def run_single_optimization(
         "roughest": roughest,
         "model_version": model_payload.get("version"),
     }
+    if OPTIMIZE_CONFIG_HASH_DEBUG:
+        response_payload["config_hash"] = config_hash
+    return response_payload
 
 
 @app.post("/presets")
@@ -2557,7 +2593,8 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
     cfg["playlist"] = run.get("source_playlist_id")
     if payload.public is not None:
         cfg["public"] = payload.public
-    replay = OptimizeRequest(**cfg)
+    replay = resolve_optimize_payload(OptimizeRequest(**cfg))
+    config_hash = build_optimize_config_hash(replay)
 
     sp = spotify_for_session(request)
     owner_id = current_owner_id(request)
@@ -2593,6 +2630,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "roughest": roughest,
         "transitions": explainability,
         "request": replay.model_dump(),
+        "config_hash": config_hash,
         "public": replay.public,
         "parent_run_id": run_id,
         "model_version": model_payload.get("version"),
@@ -2600,7 +2638,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "created_at": time.time(),
     }
 
-    return {
+    response_payload = {
         "run_id": new_run_id,
         "playlist_id": new_playlist_id,
         "playlist_name": quick_name,
@@ -2609,3 +2647,6 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "roughest": roughest,
         "model_version": model_payload.get("version"),
     }
+    if OPTIMIZE_CONFIG_HASH_DEBUG:
+        response_payload["config_hash"] = config_hash
+    return response_payload

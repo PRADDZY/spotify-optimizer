@@ -23,8 +23,11 @@ from backend.app import (
     STORE,
     OptimizeRequest,
     apply_builtin_preset,
+    build_optimize_config_hash,
     execute_transition_training,
     edge_score_diff,
+    normalize_optimize_payload,
+    resolve_optimize_payload,
     transition_summary,
     validate_optimize_payload,
 )
@@ -100,6 +103,57 @@ def test_apply_builtin_preset_keeps_explicit_overrides():
 
     assert resolved.flow_profile == "cooldown"
     assert resolved.minimax_passes == 1
+
+
+def test_normalize_optimize_payload_sorts_guardrails_and_curve_points():
+    payload = OptimizeRequest(
+        playlist="abc123",
+        bpm_guardrails=[128, 110, 128, 0],
+        mood_curve_points=[
+            {"position": 0.8, "energy": 0.5},
+            {"position": 0.2, "energy": 0.4},
+        ],
+    )
+    normalized = normalize_optimize_payload(payload)
+
+    assert normalized.bpm_guardrails == [110.0, 128.0]
+    assert [point.position for point in (normalized.mood_curve_points or [])] == [0.2, 0.8]
+
+
+def test_build_optimize_config_hash_is_stable_for_equivalent_payloads():
+    left = OptimizeRequest(
+        playlist="abc123",
+        name="mix A",
+        bpm_guardrails=[128, 110],
+        mood_curve_points=[
+            {"position": 0.8, "energy": 0.5},
+            {"position": 0.2, "energy": 0.4},
+        ],
+    )
+    right = OptimizeRequest(
+        playlist="abc123",
+        name="mix B",
+        bpm_guardrails=[110, 128],
+        mood_curve_points=[
+            {"position": 0.2, "energy": 0.4},
+            {"position": 0.8, "energy": 0.5},
+        ],
+    )
+
+    assert build_optimize_config_hash(left) == build_optimize_config_hash(right)
+
+
+def test_resolve_optimize_payload_applies_preset_and_normalization():
+    payload = OptimizeRequest(
+        playlist="abc123",
+        preset_id="warmup",
+        bpm_guardrails=[130, 115],
+    )
+    resolved = resolve_optimize_payload(payload)
+
+    assert resolved.flow_curve is True
+    assert resolved.flow_profile == "gentle"
+    assert resolved.bpm_guardrails == [115.0, 130.0]
 
 
 def test_apply_builtin_preset_rejects_unknown_preset():

@@ -109,6 +109,7 @@ Backend: `http://localhost:8000`
 - Old runtime records/events are pruned by retention policy (`STATE_RETENTION_DAYS`, default 30).
 - Spotify API calls use automatic retry/backoff (`SPOTIFY_API_RETRIES`, `SPOTIFY_API_BACKOFF`) for transient failures.
 - API guardrails include request size limits (`MAX_REQUEST_BYTES`) and default security headers (`SECURITY_HEADERS_ENABLED`).
+- Set `OPTIMIZE_CONFIG_HASH_DEBUG=true` to include request config hash diagnostics in optimize responses.
 - Use `Idempotency-Key` request header on `POST /optimize` and `POST /optimize/async` to avoid duplicate runs.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
 - `/metrics` exposes Prometheus-compatible metrics.
