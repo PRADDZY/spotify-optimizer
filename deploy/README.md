@@ -78,7 +78,17 @@ sudo systemctl status spotify-backend --no-pager
 sudo systemctl status spotify-frontend --no-pager
 ```
 
-4. Optional optimize load test from your workstation (authenticated session required):
+4. End-to-end async optimize smoke test (authenticated session required):
+
+```bash
+python scripts/smoke_optimize_async.py \
+  --base-url https://api.your-domain.com \
+  --payload-file scripts/samples/optimize_payload.json \
+  --session-cookie "spotify_opt_sid=YOUR_SESSION_ID" \
+  --check-ready
+```
+
+5. Optional optimize load test from your workstation (authenticated session required):
 
 ```bash
 python scripts/load_test_optimize.py \

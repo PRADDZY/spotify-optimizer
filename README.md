@@ -155,3 +155,15 @@ python scripts/load_test_optimize.py \
 ```
 
 The script prints latency percentiles, status counts, and failure rate; it exits non-zero when failure rate exceeds `--max-fail-rate`.
+
+## Async Smoke Test (Pre-Prod)
+
+Use this to validate one full optimize lifecycle on staging/local:
+
+```bash
+python scripts/smoke_optimize_async.py \
+  --base-url http://localhost:8000 \
+  --payload-file scripts/samples/optimize_payload.json \
+  --session-cookie "spotify_opt_sid=YOUR_SESSION_ID" \
+  --check-ready
+```
