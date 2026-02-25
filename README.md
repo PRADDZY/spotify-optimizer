@@ -122,6 +122,15 @@ Backend: `http://localhost:8000`
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
 - Spotify's developer terms prohibit training on Spotify content. The model here is trained only on explicit user feedback labels + transition diagnostics.
 
+## Git Workflow
+
+- Branch/merge policy is documented in `docs/git-branch-style.md`.
+- Active + historical branch index lives in `docs/git-branch-map.md`.
+- Repo settings checklist for enforcing the policy is in `docs/git-repo-settings-checklist.md`.
+- Local hook setup scripts:
+  - `scripts/setup-git-hooks.ps1`
+  - `scripts/setup-git-hooks.sh`
+
 ## VPS Deploy
 
 See `deploy/README.md` for the VPS setup script and templates.
