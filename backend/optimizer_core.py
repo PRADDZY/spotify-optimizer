@@ -1598,6 +1598,28 @@ def transition_component_breakdown(
     }
 
 
+def normalize_component_contributions(components: Dict[str, float]) -> Dict[str, float]:
+    total = sum(max(0.0, float(value)) for value in components.values())
+    if total <= 1e-9:
+        return {key: 0.0 for key in components}
+    return {key: round(max(0.0, float(value)) / total, 6) for key, value in components.items()}
+
+
+def transition_reason_code(components: Dict[str, float]) -> str:
+    if not components:
+        return "balanced"
+    top_metric = max(components.items(), key=lambda item: item[1])[0]
+    mapping = {
+        "bpm": "tempo_mismatch",
+        "key": "harmonic_mismatch",
+        "energy": "energy_shift",
+        "valence": "mood_shift",
+        "dance": "groove_shift",
+        "loudness": "loudness_gap",
+    }
+    return mapping.get(top_metric, "mixed_factors")
+
+
 def transition_reason(components: Dict[str, float]) -> str:
     if not components:
         return "Balanced transition profile."
@@ -1645,10 +1667,14 @@ def build_transition_explainability(
         left_track = tracks[left_idx]
         right_track = tracks[right_idx]
         components = transition_component_breakdown(left_track, right_track, weights, bpm_window, context)
+        dominant_component = max(components.items(), key=lambda item: item[1])[0] if components else None
         details.append(
             {
                 **transition_record(left_track, right_track, dist[left_idx][right_idx], pos),
                 "components": components,
+                "component_share": normalize_component_contributions(components),
+                "dominant_component": dominant_component,
+                "reason_code": transition_reason_code(components),
                 "reason": transition_reason(components),
                 "crossfade_seconds": recommend_crossfade_seconds(left_track, right_track),
             }

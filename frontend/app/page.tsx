@@ -21,6 +21,25 @@ type OptimizeResult = {
   run_id: string;
 };
 
+type TransitionDetail = {
+  index: number;
+  score: number;
+  from_track: string;
+  to_track: string;
+  reason: string;
+  reason_code: string;
+  dominant_component?: string | null;
+  component_share?: Record<string, number>;
+  components?: Record<string, number>;
+};
+
+type TransitionDiagnostics = {
+  summary?: {
+    dominant_penalties?: Array<{ reason_code: string; count: number }>;
+  };
+  transitions?: TransitionDetail[];
+};
+
 type Profile = {
   id: string;
   display_name: string;
@@ -143,6 +162,10 @@ export default function HomePage() {
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [result, setResult] = useState<OptimizeResult | null>(null);
+  const [transitionSummary, setTransitionSummary] =
+    useState<TransitionDiagnostics["summary"]>();
+  const [transitionDetails, setTransitionDetails] = useState<TransitionDetail[]>([]);
+  const [selectedTransitionIndex, setSelectedTransitionIndex] = useState(0);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -175,6 +198,31 @@ export default function HomePage() {
     return () => controller.abort();
   }, [apiBase]);
 
+  useEffect(() => {
+    if (!result?.run_id) {
+      setTransitionSummary(undefined);
+      setTransitionDetails([]);
+      setSelectedTransitionIndex(0);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`${apiBase}/optimize/${result.run_id}/transitions`, {
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload: TransitionDiagnostics | null) => {
+        if (!payload) {
+          return;
+        }
+        setTransitionSummary(payload.summary);
+        setTransitionDetails(payload.transitions ?? []);
+        setSelectedTransitionIndex(0);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [apiBase, result?.run_id]);
+
   const handleConnect = () => {
     window.location.href = `${apiBase}/login`;
   };
@@ -190,6 +238,10 @@ export default function HomePage() {
   const activePreset = useMemo(
     () => builtinPresets.find((item) => item.preset_id === presetId) ?? null,
     [builtinPresets, presetId]
+  );
+  const selectedTransition = useMemo(
+    () => transitionDetails[selectedTransitionIndex] ?? null,
+    [transitionDetails, selectedTransitionIndex]
   );
 
   const resetObjective = () => {
@@ -616,6 +668,51 @@ export default function HomePage() {
                       {item.to_key}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {transitionSummary?.dominant_penalties &&
+                transitionSummary.dominant_penalties.length > 0 && (
+                  <div className="dominant-reasons">
+                    {transitionSummary.dominant_penalties.map((item) => (
+                      <span className="pill" key={item.reason_code}>
+                        {item.reason_code}: {item.count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+              {transitionDetails.length > 0 && (
+                <div className="transition-diagnostics">
+                  <div className="list">
+                    {transitionDetails.slice(0, 12).map((item, index) => (
+                      <button
+                        type="button"
+                        key={`${item.index}-${item.from_track}`}
+                        className={`list-item transition-item ${
+                          index === selectedTransitionIndex ? "active" : ""
+                        }`}
+                        onClick={() => setSelectedTransitionIndex(index)}
+                      >
+                        {item.from_track} {"->"} {item.to_track} | {item.reason_code} | score{" "}
+                        {item.score.toFixed(3)}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedTransition && (
+                    <div className="transition-detail">
+                      <div className="status">{selectedTransition.reason}</div>
+                      <div className="weight-grid">
+                        {Object.entries(selectedTransition.component_share || {}).map(
+                          ([key, value]) => (
+                            <div className="list-item" key={key}>
+                              {key}: {(value * 100).toFixed(1)}%
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
