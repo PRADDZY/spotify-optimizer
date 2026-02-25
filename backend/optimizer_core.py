@@ -124,6 +124,7 @@ class OptimizationConfig:
     tempo_ramp_weight: float = 0.08
     minimax_passes: int = 2
     artist_gap: int = 0
+    album_gap: int = 0
 
 
 def parse_playlist_id(value: str) -> str:
@@ -716,6 +717,13 @@ def order_cost(
             config.artist_gap,
             key_fn=lambda track: track.artist_ids[0] if track.artist_ids else (track.artists or None),
         )
+    if config.album_gap > 0:
+        cost += 0.14 * repetition_gap_penalty(
+            order,
+            tracks,
+            config.album_gap,
+            key_fn=lambda track: track.album_id,
+        )
 
     return cost
 
@@ -1307,6 +1315,7 @@ def optimize_tracks(
     locked_last_track_id: Optional[str] = None,
     locked_blocks: Optional[List[List[str]]] = None,
     artist_gap: int = 0,
+    album_gap: int = 0,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1333,6 +1342,7 @@ def optimize_tracks(
         tempo_ramp_weight=max(0.0, tempo_ramp_weight),
         minimax_passes=max(0, minimax_passes),
         artist_gap=max(0, artist_gap),
+        album_gap=max(0, album_gap),
     )
 
     energy_targets: Optional[List[float]] = None
