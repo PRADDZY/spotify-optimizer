@@ -30,6 +30,7 @@ from .optimizer_core import (
     optimized_name,
     optimize_tracks,
     parse_playlist_id,
+    spotify_call_with_retry,
 )
 from .state_store import DurableDict, DurableEventBuffer, SQLiteStateStore
 
@@ -207,6 +208,7 @@ FEEDBACK_WEIGHT_OFFSETS = DurableDict(STATE_STORE, "feedback_weight_offsets")
 RUN_TASK_STATUS = DurableDict(STATE_STORE, "run_task_status")
 EVENT_STORE = DurableEventBuffer(STATE_STORE, "run_event_buffer")
 REPORT_STORE = DurableDict(STATE_STORE, "report_store")
+IDEMPOTENCY_STORE = DurableDict(STATE_STORE, "idempotency_store")
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -630,8 +632,12 @@ def optimize(request: Request, payload: OptimizeRequest):
     if payload.explicit_mode not in {"allow", "prefer_clean", "clean_only"}:
         raise HTTPException(status_code=400, detail="explicit_mode must be allow, prefer_clean, or clean_only")
 
-    sp = spotify_for_session(request)
     owner_id = current_owner_id(request)
+    cached = get_idempotency_response(owner_id, "optimize", request)
+    if cached:
+        return cached.get("payload")
+
+    sp = spotify_for_session(request)
     result = run_single_optimization(sp=sp, owner_id=owner_id, payload=payload, seed=42)
     RUN_TASK_STATUS[result["run_id"]] = {
         "status": "completed",
@@ -639,6 +645,7 @@ def optimize(request: Request, payload: OptimizeRequest):
         "result": result,
         "updated_at": time.time(),
     }
+    set_idempotency_response(owner_id, "optimize", request, result)
     return result
 
 
@@ -679,8 +686,12 @@ def optimize_async(request: Request, payload: OptimizeRequest):
     sid = get_session_id(request)
     if not sid:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    run_id = uuid.uuid4().hex
     owner_id = current_owner_id(request)
+    cached = get_idempotency_response(owner_id, "optimize_async", request)
+    if cached:
+        return cached.get("payload")
+
+    run_id = uuid.uuid4().hex
     RUN_TASK_STATUS[run_id] = {
         "status": "queued",
         "progress": 0,
@@ -694,7 +705,9 @@ def optimize_async(request: Request, payload: OptimizeRequest):
         name=f"optimize-async-{run_id[:8]}",
     )
     worker.start()
-    return {"run_id": run_id, "status": "queued"}
+    response_payload = {"run_id": run_id, "status": "queued"}
+    set_idempotency_response(owner_id, "optimize_async", request, response_payload)
+    return response_payload
 
 
 @app.get("/optimize/{run_id}")
@@ -991,8 +1004,30 @@ def update_feedback_offsets(owner_id: str, feature: str, rating: int) -> None:
     offsets[mapped] = max(-0.25, min(0.25, offsets.get(mapped, 0.0) + direction * step))
 
 
+def idempotency_record_key(owner_id: str, action: str, key: str) -> str:
+    return f"{owner_id}:{action}:{key}"
+
+
+def get_idempotency_response(owner_id: str, action: str, request: Request) -> Optional[dict]:
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        return None
+    return IDEMPOTENCY_STORE.get(idempotency_record_key(owner_id, action, key))
+
+
+def set_idempotency_response(owner_id: str, action: str, request: Request, response_payload: dict) -> None:
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        return
+    IDEMPOTENCY_STORE[idempotency_record_key(owner_id, action, key)] = {
+        "payload": response_payload,
+        "created_at": time.time(),
+    }
+
+
 def fetch_playlist_track_ids(sp: spotipy.Spotify, playlist_id: str) -> list[str]:
-    results = sp.playlist_items(
+    results = spotify_call_with_retry(
+        sp.playlist_items,
         playlist_id,
         fields="items(track(id)),next",
         additional_types=["track"],
@@ -1005,7 +1040,7 @@ def fetch_playlist_track_ids(sp: spotipy.Spotify, playlist_id: str) -> list[str]
             if track and track.get("id"):
                 track_ids.append(track["id"])
         if results.get("next"):
-            results = sp.next(results)
+            results = spotify_call_with_retry(sp.next, results)
         else:
             break
     return track_ids
@@ -1018,14 +1053,15 @@ def create_playlist_with_items(
     track_ids: list[str],
     description: str,
 ) -> str:
-    playlist_id = sp.user_playlist_create(
-        sp.current_user()["id"],
+    playlist_id = spotify_call_with_retry(
+        sp.user_playlist_create,
+        spotify_call_with_retry(sp.current_user)["id"],
         name=name,
         public=public,
         description=description,
     )["id"]
     for i in range(0, len(track_ids), 100):
-        sp.playlist_add_items(playlist_id, track_ids[i : i + 100])
+        spotify_call_with_retry(sp.playlist_add_items, playlist_id, track_ids[i : i + 100])
     return playlist_id
 
 

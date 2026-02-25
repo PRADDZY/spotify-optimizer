@@ -4,6 +4,7 @@ import math
 import os
 import random
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
+from spotipy.exceptions import SpotifyException
 
 KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -181,8 +183,28 @@ def get_spotify_client(auth_mode: str, redirect_uri: str, scopes: str) -> spotip
     return spotipy.Spotify(auth_manager=auth_manager, requests_timeout=10)
 
 
+def spotify_call_with_retry(fn: Callable, *args, **kwargs):
+    retries = max(1, int(os.getenv("SPOTIFY_API_RETRIES", "4")))
+    backoff = max(0.1, float(os.getenv("SPOTIFY_API_BACKOFF", "0.8")))
+    for attempt in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except SpotifyException as exc:
+            status = getattr(exc, "http_status", None)
+            if status not in {429, 500, 502, 503, 504} or attempt == retries - 1:
+                raise
+            wait_time = backoff * (2 ** attempt) + random.uniform(0, 0.2)
+            time.sleep(wait_time)
+        except Exception:
+            if attempt == retries - 1:
+                raise
+            wait_time = backoff * (2 ** attempt) + random.uniform(0, 0.2)
+            time.sleep(wait_time)
+
+
 def fetch_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> Tuple[str, List[Track]]:
-    results = sp.playlist_items(
+    results = spotify_call_with_retry(
+        sp.playlist_items,
         playlist_id,
         fields="items(track(id,name,artists(id,name),album(id),explicit,duration_ms),is_local),next,total",
         additional_types=["track"],
@@ -213,12 +235,12 @@ def fetch_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> Tuple[str, L
                 )
             )
         if results.get("next"):
-            results = sp.next(results)
+            results = spotify_call_with_retry(sp.next, results)
         else:
             break
 
     try:
-        playlist_name = sp.playlist(playlist_id, fields="name").get("name", "")
+        playlist_name = spotify_call_with_retry(sp.playlist, playlist_id, fields="name").get("name", "")
     except Exception:
         playlist_name = ""
 
@@ -234,7 +256,7 @@ def enrich_audio_features(sp: spotipy.Spotify, tracks: List[Track], cache_path: 
     missing_ids = [t.id for t in tracks if t.id not in cache]
 
     for batch in chunked(missing_ids, 100):
-        features = sp.audio_features(batch)
+        features = spotify_call_with_retry(sp.audio_features, batch)
         for track_id, feat in zip(batch, features):
             cache[track_id] = feat
 
@@ -250,7 +272,7 @@ def enrich_artist_genres(sp: spotipy.Spotify, tracks: List[Track], cache_path: s
     missing = [artist_id for artist_id in artist_ids if artist_id not in cache]
 
     for batch in chunked(missing, 50):
-        artists_payload = sp.artists(batch).get("artists", [])
+        artists_payload = spotify_call_with_retry(sp.artists, batch).get("artists", [])
         for artist in artists_payload:
             if not artist:
                 continue
@@ -1612,11 +1634,17 @@ def optimized_name(base_name: str) -> str:
 
 
 def create_playlist(sp: spotipy.Spotify, name: str, track_ids: List[str], public: bool) -> str:
-    user_id = sp.current_user()["id"]
-    playlist = sp.user_playlist_create(user_id, name=name, public=public, description="Optimized playlist order")
+    user_id = spotify_call_with_retry(sp.current_user)["id"]
+    playlist = spotify_call_with_retry(
+        sp.user_playlist_create,
+        user_id,
+        name=name,
+        public=public,
+        description="Optimized playlist order",
+    )
     playlist_id = playlist["id"]
     for batch in chunked(track_ids, 100):
-        sp.playlist_add_items(playlist_id, batch)
+        spotify_call_with_retry(sp.playlist_add_items, playlist_id, batch)
     return playlist_id
 
 
