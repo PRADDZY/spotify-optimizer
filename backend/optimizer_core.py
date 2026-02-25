@@ -588,6 +588,17 @@ def resolve_weights(weights: Dict[str, float], mix_mode: str) -> Dict[str, float
     return normalize_weights(merged)
 
 
+def apply_weight_offsets(weights: Dict[str, float], offsets: Optional[Dict[str, float]]) -> Dict[str, float]:
+    if not offsets:
+        return weights
+    adjusted = dict(weights)
+    for key, delta in offsets.items():
+        if key not in adjusted:
+            continue
+        adjusted[key] = max(0.0, adjusted[key] + float(delta))
+    return normalize_weights(adjusted)
+
+
 def track_distance(
     t1: Track,
     t2: Track,
@@ -1612,6 +1623,7 @@ def optimize_tracks(
     mood_curve_points: Optional[List[Dict[str, float]]] = None,
     bpm_guardrails: Optional[List[float]] = None,
     harmonic_strict: bool = False,
+    feedback_offsets: Optional[Dict[str, float]] = None,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1634,6 +1646,7 @@ def optimize_tracks(
         raise RuntimeError("No tracks had the required key/tempo features to optimize.")
 
     resolved_weights = resolve_weights(weights, mix_mode)
+    resolved_weights = apply_weight_offsets(resolved_weights, feedback_offsets)
     context = build_feature_context(with_features)
     dist = build_distance_matrix(with_features, resolved_weights, bpm_window, context)
 

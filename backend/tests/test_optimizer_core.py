@@ -8,6 +8,7 @@ from backend.optimizer_core import (
     apply_locked_blocks,
     apply_explicit_filter,
     apply_duration_target,
+    apply_weight_offsets,
     append_transition_log,
     build_custom_curve,
     recommend_crossfade_seconds,
@@ -276,6 +277,12 @@ def test_crossfade_recommendation_increases_on_large_mismatch():
     short = recommend_crossfade_seconds(close_a, close_b)
     long = recommend_crossfade_seconds(close_a, far_b)
     assert long > short
+
+
+def test_feedback_weight_offsets_adjust_distribution():
+    base = {"bpm": 0.4, "key": 0.3, "energy": 0.3}
+    adjusted = apply_weight_offsets(base, {"energy": 0.1, "key": -0.1})
+    assert adjusted["energy"] > adjusted["key"]
 
 
 def test_album_gap_penalty_prefers_spaced_albums():

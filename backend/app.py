@@ -162,6 +162,14 @@ class AnchorSuggestRequest(BaseModel):
     count: int = Field(3, ge=1, le=10)
 
 
+class ManualFeedbackRequest(BaseModel):
+    run_id: str
+    edge_index: int = Field(..., ge=0)
+    rating: int = Field(..., ge=-2, le=2)
+    feature: Optional[str] = None
+    note: Optional[str] = None
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -186,6 +194,8 @@ SNAPSHOT_STORE: dict[str, dict] = {}
 BATCH_STORE: dict[str, dict] = {}
 SCHEDULE_STORE: dict[str, dict] = {}
 SCHEDULER_STOP = threading.Event()
+FEEDBACK_STORE: list[dict] = []
+FEEDBACK_WEIGHT_OFFSETS: dict[str, dict[str, float]] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -557,6 +567,8 @@ def logout(request: Request):
 @app.get("/me")
 def me(request: Request):
     sp = spotify_for_session(request)
+    owner_id = current_owner_id(request)
+    feedback_offsets = owner_feedback_offsets(owner_id)
     profile = sp.current_user()
     return {"id": profile.get("id"), "display_name": profile.get("display_name")}
 
@@ -642,6 +654,7 @@ def optimize(request: Request, payload: OptimizeRequest):
         mood_curve_points=[point.model_dump() for point in payload.mood_curve_points or []],
         bpm_guardrails=payload.bpm_guardrails or [],
         harmonic_strict=payload.harmonic_strict,
+        feedback_offsets=feedback_offsets,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
@@ -659,7 +672,7 @@ def optimize(request: Request, payload: OptimizeRequest):
 
     snapshot_id = uuid.uuid4().hex
     SNAPSHOT_STORE[snapshot_id] = {
-        "owner_id": current_owner_id(request),
+        "owner_id": owner_id,
         "source_playlist_id": source_playlist_id,
         "source_playlist_name": playlist_name,
         "source_track_ids": source_track_ids,
@@ -760,6 +773,45 @@ def get_comparison(comparison_id: str):
     return {"comparison_id": comparison_id, **comparison}
 
 
+@app.post("/feedback/manual")
+def manual_feedback(request: Request, payload: ManualFeedbackRequest):
+    run = RUN_HISTORY.get(payload.run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    transitions = run.get("transitions", [])
+    if payload.edge_index >= len(transitions):
+        raise HTTPException(status_code=400, detail="edge_index out of range")
+
+    owner_id = current_owner_id(request)
+    transition = transitions[payload.edge_index]
+    components = transition.get("components", {})
+    inferred = None
+    if components:
+        inferred = max(components.items(), key=lambda item: float(item[1]))[0]
+    feature = payload.feature or inferred
+    if not feature:
+        raise HTTPException(status_code=400, detail="feature could not be inferred")
+
+    FEEDBACK_STORE.append(
+        {
+            "owner_id": owner_id,
+            "run_id": payload.run_id,
+            "edge_index": payload.edge_index,
+            "rating": payload.rating,
+            "feature": feature,
+            "note": payload.note,
+            "created_at": time.time(),
+        }
+    )
+    update_feedback_offsets(owner_id, feature, payload.rating)
+    return {
+        "saved": True,
+        "owner_id": owner_id,
+        "feature": feature,
+        "offsets": owner_feedback_offsets(owner_id),
+    }
+
+
 def current_owner_id(request: Request) -> str:
     sid = get_session_id(request)
     if sid:
@@ -767,6 +819,29 @@ def current_owner_id(request: Request) -> str:
         if session and session.get("user_id"):
             return str(session["user_id"])
     return "anonymous"
+
+
+def owner_feedback_offsets(owner_id: str) -> dict[str, float]:
+    return FEEDBACK_WEIGHT_OFFSETS.get(owner_id, {})
+
+
+def update_feedback_offsets(owner_id: str, feature: str, rating: int) -> None:
+    key_map = {
+        "bpm": "bpm",
+        "key": "key",
+        "energy": "energy",
+        "valence": "valence",
+        "dance": "dance",
+        "danceability": "dance",
+        "loudness": "loudness",
+    }
+    mapped = key_map.get(feature)
+    if not mapped:
+        return
+    direction = 1.0 if rating > 0 else -1.0
+    step = min(0.05, abs(rating) * 0.02)
+    offsets = FEEDBACK_WEIGHT_OFFSETS.setdefault(owner_id, {})
+    offsets[mapped] = max(-0.25, min(0.25, offsets.get(mapped, 0.0) + direction * step))
 
 
 def fetch_playlist_track_ids(sp: spotipy.Spotify, playlist_id: str) -> list[str]:
@@ -839,6 +914,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
     batch_id = uuid.uuid4().hex
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     options = payload.options or {}
+    feedback_offsets = owner_feedback_offsets(owner_id)
     items = []
 
     for index, playlist in enumerate(payload.playlists):
@@ -877,6 +953,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 mood_curve_points=[point.model_dump() for point in cfg_payload.mood_curve_points or []],
                 bpm_guardrails=cfg_payload.bpm_guardrails or [],
                 harmonic_strict=cfg_payload.harmonic_strict,
+                feedback_offsets=feedback_offsets,
                 transition_log_path=TRANSITION_LOG_PATH,
             )
 
@@ -1247,6 +1324,8 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
     replay = OptimizeRequest(**cfg)
 
     sp = spotify_for_session(request)
+    owner_id = current_owner_id(request)
+    feedback_offsets = owner_feedback_offsets(owner_id)
     weights = replay.weights.model_dump() if replay.weights else {}
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     source_playlist_id = parse_playlist_id(replay.playlist)
@@ -1279,6 +1358,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         mood_curve_points=[point.model_dump() for point in replay.mood_curve_points or []],
         bpm_guardrails=replay.bpm_guardrails or [],
         harmonic_strict=replay.harmonic_strict,
+        feedback_offsets=feedback_offsets,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
