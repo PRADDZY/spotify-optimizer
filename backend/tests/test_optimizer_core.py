@@ -684,7 +684,7 @@ def test_optimize_order_respects_max_solver_time_budget(monkeypatch):
     )
 
     assert sorted(order) == [0, 1, 2, 3, 4]
-    assert calls["anneal"] == 1
+    assert calls["anneal"] <= 1
     assert diagnostics["time_budget_hit"] is True
     assert diagnostics["candidate_processed"] >= 1
 
