@@ -68,6 +68,7 @@ MODEL_MIN_ACCURACY = float(os.getenv("MODEL_MIN_ACCURACY", "0.55"))
 MODEL_MAX_LOSS = float(os.getenv("MODEL_MAX_LOSS", "0.72"))
 MODEL_MIN_ACCURACY_DELTA = float(os.getenv("MODEL_MIN_ACCURACY_DELTA", "0.0"))
 MODEL_MAX_LOSS_DELTA = float(os.getenv("MODEL_MAX_LOSS_DELTA", "0.0"))
+MODEL_EVAL_WINDOW_DAYS = int(os.getenv("MODEL_EVAL_WINDOW_DAYS", "30"))
 MODEL_ADMIN_USER_IDS = {
     value.strip()
     for value in os.getenv("MODEL_ADMIN_USER_IDS", "").split(",")
@@ -562,6 +563,129 @@ def evaluate_promotion_gate(
             "loss": loss_delta,
         },
         "reasons": reasons,
+    }
+
+
+def build_model_feedback_evaluation(days: int) -> dict[str, object]:
+    window_days = max(1, min(365, int(days)))
+    cutoff = time.time() - (window_days * 86400)
+
+    runs = {run_id: row for run_id, row in RUN_HISTORY.items()}
+    active_version = MODEL_STATE.get("active_version")
+    active_record = MODEL_REGISTRY.get(active_version) if active_version else None
+
+    version_buckets: dict[str, dict[str, object]] = {}
+    total_labeled_feedback = 0
+
+    for _, feedback in FEEDBACK_STORE.items():
+        if not isinstance(feedback, dict):
+            continue
+        rating = int(feedback.get("rating", 0))
+        if rating == 0:
+            continue
+
+        created_at = float(feedback.get("created_at", 0.0) or 0.0)
+        if created_at and created_at < cutoff:
+            continue
+
+        run_id = feedback.get("run_id")
+        run = runs.get(run_id)
+        if not isinstance(run, dict):
+            continue
+
+        transitions = run.get("transitions") or []
+        edge_index = int(feedback.get("edge_index", -1))
+        reason_code = "unknown"
+        if 0 <= edge_index < len(transitions):
+            transition = transitions[edge_index] if isinstance(transitions[edge_index], dict) else {}
+            reason_code = str(transition.get("reason_code") or "unknown")
+
+        model_version = str(run.get("model_version") or "heuristic")
+        bucket = version_buckets.setdefault(
+            model_version,
+            {
+                "version": model_version,
+                "sample_count": 0,
+                "positive_count": 0,
+                "negative_count": 0,
+                "rating_sum": 0.0,
+                "reason_counts": {},
+                "latest_feedback_at": 0.0,
+            },
+        )
+
+        bucket["sample_count"] = int(bucket.get("sample_count", 0)) + 1
+        bucket["rating_sum"] = float(bucket.get("rating_sum", 0.0)) + float(rating)
+        if rating > 0:
+            bucket["positive_count"] = int(bucket.get("positive_count", 0)) + 1
+        elif rating < 0:
+            bucket["negative_count"] = int(bucket.get("negative_count", 0)) + 1
+
+        reason_counts = bucket.setdefault("reason_counts", {})
+        reason_counts[reason_code] = int(reason_counts.get(reason_code, 0)) + 1
+
+        latest_feedback_at = float(bucket.get("latest_feedback_at", 0.0) or 0.0)
+        if created_at > latest_feedback_at:
+            bucket["latest_feedback_at"] = created_at
+
+        total_labeled_feedback += 1
+
+    versions = []
+    for version, bucket in version_buckets.items():
+        sample_count = int(bucket.get("sample_count", 0))
+        if sample_count <= 0:
+            continue
+
+        reason_counts = bucket.get("reason_counts", {})
+        dominant_reason_codes = [
+            {"reason_code": reason_code, "count": count}
+            for reason_code, count in sorted(
+                reason_counts.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:3]
+        ]
+
+        record = MODEL_REGISTRY.get(version) if version != "heuristic" else None
+        quality_gate = quality_gate_for_record(record) if record else None
+        promotion_gate = (
+            evaluate_promotion_gate(
+                record,
+                active_record if version != active_version else None,
+            )
+            if record
+            else None
+        )
+
+        versions.append(
+            {
+                "version": version,
+                "sample_count": sample_count,
+                "positive_ratio": round(int(bucket.get("positive_count", 0)) / sample_count, 6),
+                "rough_rate": round(int(bucket.get("negative_count", 0)) / sample_count, 6),
+                "mean_rating": round(float(bucket.get("rating_sum", 0.0)) / sample_count, 6),
+                "latest_feedback_at": float(bucket.get("latest_feedback_at", 0.0) or 0.0),
+                "dominant_reason_codes": dominant_reason_codes,
+                "quality_gate": quality_gate,
+                "promotion_gate": promotion_gate,
+            }
+        )
+
+    versions.sort(
+        key=lambda row: (
+            int(row.get("sample_count", 0)),
+            float(row.get("latest_feedback_at", 0.0)),
+        ),
+        reverse=True,
+    )
+    active_metrics = next((item for item in versions if item.get("version") == active_version), None)
+
+    return {
+        "window_days": window_days,
+        "total_labeled_feedback": total_labeled_feedback,
+        "active_version": active_version,
+        "active_metrics": active_metrics,
+        "versions": versions[:20],
     }
 
 
@@ -1668,6 +1792,15 @@ def model_status(request: Request):
         "active_quality_gate": quality_gate_for_record(active_record) if active_record else None,
         "available_versions": versions[:20],
     }
+
+
+@app.get("/model/evaluation")
+@limiter.limit(RATE_LIMIT_MODEL_STATUS)
+def model_evaluation(request: Request, days: int = MODEL_EVAL_WINDOW_DAYS):
+    _ = require_model_admin(request)
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+    return build_model_feedback_evaluation(days)
 
 
 @app.post("/model/train")
