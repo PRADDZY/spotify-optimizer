@@ -70,6 +70,10 @@ type ModelStatus = {
     min_accuracy: number;
     max_loss: number;
   };
+  promotion_thresholds?: {
+    min_accuracy_delta: number;
+    max_loss_delta: number;
+  };
   active_quality_gate?: {
     passed: boolean;
     reasons?: string[];
@@ -96,6 +100,10 @@ type ModelTrainingJob = {
     sample_count?: number;
     activated?: boolean;
     quality_gate?: {
+      passed?: boolean;
+      reasons?: string[];
+    };
+    promotion_gate?: {
       passed?: boolean;
       reasons?: string[];
     };
@@ -550,6 +558,8 @@ export default function HomePage() {
           if (resultPayload.trained) {
             const gateFailed = resultPayload.quality_gate?.passed === false;
             const gateReason = resultPayload.quality_gate?.reasons?.[0];
+            const promotionFailed = resultPayload.promotion_gate?.passed === false;
+            const promotionReason = resultPayload.promotion_gate?.reasons?.[0];
             if (resultPayload.activated) {
               setModelMessage(`Model trained + activated: ${resultPayload.version}`);
             } else if (gateFailed) {
@@ -557,6 +567,12 @@ export default function HomePage() {
                 gateReason
                   ? `Model trained but not activated (${gateReason}).`
                   : "Model trained but not activated (quality gate failed)."
+              );
+            } else if (promotionFailed) {
+              setModelMessage(
+                promotionReason
+                  ? `Model trained but not promoted (${promotionReason}).`
+                  : "Model trained but not promoted (promotion gate failed)."
               );
             } else {
               setModelMessage(`Model trained: ${resultPayload.version}`);
@@ -1202,6 +1218,14 @@ export default function HomePage() {
               </div>
               <div className="list-item">
                 Gate max loss: {(modelStatus?.quality_gate_thresholds?.max_loss ?? 0).toFixed(2)}
+              </div>
+              <div className="list-item">
+                Promotion min acc delta:{" "}
+                {(modelStatus?.promotion_thresholds?.min_accuracy_delta ?? 0).toFixed(2)}
+              </div>
+              <div className="list-item">
+                Promotion max loss delta:{" "}
+                {(modelStatus?.promotion_thresholds?.max_loss_delta ?? 0).toFixed(2)}
               </div>
               <div className="list-item">
                 Active gate:{" "}

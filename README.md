@@ -115,6 +115,7 @@ Backend: `http://localhost:8000`
 - A versioned transition model can be trained asynchronously from explicit feedback labels via `POST /model/train` and tracked via `GET /model/train/{job_id}`; active model metadata is available at `GET /model/status`.
 - Active model blending is controlled by `MODEL_BLEND_ALPHA`; artifacts are stored under `MODEL_DIR`.
 - Model activation is gated by quality thresholds (`MODEL_MIN_ACCURACY`, `MODEL_MAX_LOSS`) using holdout validation metrics when available.
+- Optional promotion guardrails (`MODEL_MIN_ACCURACY_DELTA`, `MODEL_MAX_LOSS_DELTA`) prevent automatic/manual promotion when a candidate regresses vs the active model.
 - `/model/*` endpoints are locked down and require an authenticated model-admin user; set `MODEL_ADMIN_USER_IDS` in production.
 - Model endpoints use dedicated rate limits (`RATE_LIMIT_MODEL_STATUS`, `RATE_LIMIT_MODEL_WRITE`) in addition to global limits.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.

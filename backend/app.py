@@ -66,6 +66,8 @@ MODEL_MIN_SAMPLES = int(os.getenv("MODEL_MIN_SAMPLES", "20"))
 MODEL_RETRAIN_INTERVAL_MINUTES = int(os.getenv("MODEL_RETRAIN_INTERVAL_MINUTES", "240"))
 MODEL_MIN_ACCURACY = float(os.getenv("MODEL_MIN_ACCURACY", "0.55"))
 MODEL_MAX_LOSS = float(os.getenv("MODEL_MAX_LOSS", "0.72"))
+MODEL_MIN_ACCURACY_DELTA = float(os.getenv("MODEL_MIN_ACCURACY_DELTA", "0.0"))
+MODEL_MAX_LOSS_DELTA = float(os.getenv("MODEL_MAX_LOSS_DELTA", "0.0"))
 MODEL_ADMIN_USER_IDS = {
     value.strip()
     for value in os.getenv("MODEL_ADMIN_USER_IDS", "").split(",")
@@ -483,6 +485,86 @@ def quality_gate_for_record(record: Optional[dict]) -> dict[str, object]:
     )
 
 
+def model_promotion_thresholds() -> dict[str, float]:
+    return {
+        "min_accuracy_delta": float(MODEL_MIN_ACCURACY_DELTA),
+        "max_loss_delta": float(MODEL_MAX_LOSS_DELTA),
+    }
+
+
+def _metrics_from_record(record: Optional[dict]) -> tuple[str, dict]:
+    data = record if isinstance(record, dict) else {}
+    validation_metrics = data.get("validation_metrics")
+    if isinstance(validation_metrics, dict) and validation_metrics:
+        return "validation", validation_metrics
+    metrics = data.get("metrics")
+    if isinstance(metrics, dict) and metrics:
+        return "train", metrics
+    return "none", {}
+
+
+def evaluate_promotion_gate(
+    candidate_record: Optional[dict],
+    active_record: Optional[dict],
+) -> dict[str, object]:
+    thresholds = model_promotion_thresholds()
+    candidate_source, _ = _metrics_from_record(candidate_record)
+    if not isinstance(active_record, dict):
+        return {
+            "passed": True,
+            "thresholds": thresholds,
+            "candidate_metric_source": candidate_source,
+            "active_metric_source": None,
+            "deltas": {"accuracy": None, "loss": None},
+            "reasons": [],
+        }
+
+    _, candidate_metrics = _metrics_from_record(candidate_record)
+    active_source, active_metrics = _metrics_from_record(active_record)
+
+    candidate_accuracy_raw = candidate_metrics.get("accuracy")
+    candidate_loss_raw = candidate_metrics.get("loss")
+    active_accuracy_raw = active_metrics.get("accuracy")
+    active_loss_raw = active_metrics.get("loss")
+
+    candidate_accuracy = None if candidate_accuracy_raw is None else float(candidate_accuracy_raw)
+    candidate_loss = None if candidate_loss_raw is None else float(candidate_loss_raw)
+    active_accuracy = None if active_accuracy_raw is None else float(active_accuracy_raw)
+    active_loss = None if active_loss_raw is None else float(active_loss_raw)
+
+    accuracy_delta = (
+        None
+        if candidate_accuracy is None or active_accuracy is None
+        else candidate_accuracy - active_accuracy
+    )
+    loss_delta = None if candidate_loss is None or active_loss is None else candidate_loss - active_loss
+
+    reasons: list[str] = []
+    if accuracy_delta is None:
+        reasons.append("missing accuracy metrics for promotion comparison")
+    elif accuracy_delta < thresholds["min_accuracy_delta"]:
+        reasons.append(
+            f"accuracy delta {accuracy_delta:.4f} below minimum {thresholds['min_accuracy_delta']:.4f}"
+        )
+
+    if loss_delta is None:
+        reasons.append("missing loss metrics for promotion comparison")
+    elif loss_delta > thresholds["max_loss_delta"]:
+        reasons.append(f"loss delta {loss_delta:.4f} above maximum {thresholds['max_loss_delta']:.4f}")
+
+    return {
+        "passed": len(reasons) == 0,
+        "thresholds": thresholds,
+        "candidate_metric_source": candidate_source,
+        "active_metric_source": active_source,
+        "deltas": {
+            "accuracy": accuracy_delta,
+            "loss": loss_delta,
+        },
+        "reasons": reasons,
+    }
+
+
 def update_training_job(job_id: str, **updates) -> dict:
     current = dict(TRAINING_JOB_STORE.get(job_id, {}))
     current.update(updates)
@@ -500,6 +582,10 @@ def has_active_training_job() -> bool:
 
 def execute_transition_training(owner_id: Optional[str], min_samples: int, activate: bool) -> dict:
     started_at = time.time()
+    active_version_before = MODEL_STATE.get("active_version")
+    active_record_before = (
+        MODEL_REGISTRY.get(active_version_before) if active_version_before else None
+    )
     model, details = train_transition_model_from_feedback(
         RUN_HISTORY.items(),
         FEEDBACK_STORE.items(),
@@ -521,13 +607,22 @@ def execute_transition_training(owner_id: Optional[str], min_samples: int, activ
         metrics=details.get("metrics"),
         validation_metrics=details.get("validation_metrics"),
     )
-    should_activate = bool(activate and quality_gate.get("passed"))
+    promotion_gate = evaluate_promotion_gate(
+        {
+            "metrics": details.get("metrics"),
+            "validation_metrics": details.get("validation_metrics"),
+        },
+        active_record_before,
+    )
+    should_activate = bool(activate and quality_gate.get("passed") and promotion_gate.get("passed"))
     MODEL_REGISTRY[model.version] = {
         "artifact_path": artifact_path,
         "owner_scope": owner_id or "all",
         "metrics": details.get("metrics", {}),
         "validation_metrics": details.get("validation_metrics", {}),
         "quality_gate": quality_gate,
+        "promotion_gate": promotion_gate,
+        "promotion_baseline_version": active_version_before,
         "sample_count": details.get("sample_count", 0),
         "created_at": time.time(),
     }
@@ -545,6 +640,7 @@ def execute_transition_training(owner_id: Optional[str], min_samples: int, activ
         "activate": activate,
         "activated": should_activate,
         "quality_gate": quality_gate,
+        "promotion_gate": promotion_gate,
         "started_at": started_at,
         "finished_at": time.time(),
         **details,
@@ -1550,20 +1646,25 @@ def require_model_admin(request: Request) -> str:
 def model_status(request: Request):
     _ = require_model_admin(request)
     refresh_active_model_cache()
+    active = active_model_payload()
+    active_record = MODEL_REGISTRY.get(str(active.get("version"))) if active.get("version") else None
     versions = []
     for version, record in MODEL_REGISTRY.items():
         row = {"version": version, **record}
         row["quality_gate"] = quality_gate_for_record(record)
+        row["promotion_gate"] = evaluate_promotion_gate(
+            record,
+            active_record if version != active.get("version") else None,
+        )
         versions.append(row)
     versions.sort(key=lambda row: row.get("created_at", 0), reverse=True)
-    active = active_model_payload()
-    active_record = MODEL_REGISTRY.get(str(active.get("version"))) if active.get("version") else None
     return {
         "active_version": active.get("version"),
         "alpha": active.get("alpha"),
         "sample_count": active.get("sample_count"),
         "min_samples": MODEL_MIN_SAMPLES,
         "quality_gate_thresholds": model_quality_thresholds(),
+        "promotion_thresholds": model_promotion_thresholds(),
         "active_quality_gate": quality_gate_for_record(active_record) if active_record else None,
         "available_versions": versions[:20],
     }
@@ -1610,9 +1711,25 @@ def model_activate(request: Request, version: str):
         reasons = quality_gate.get("reasons") or []
         reason_text = ", ".join(str(reason) for reason in reasons) if reasons else "unknown gate failure"
         raise HTTPException(status_code=409, detail=f"quality gate failed: {reason_text}")
+    active_version = MODEL_STATE.get("active_version")
+    active_record = (
+        MODEL_REGISTRY.get(active_version)
+        if active_version and active_version != version
+        else None
+    )
+    promotion_gate = evaluate_promotion_gate(record, active_record)
+    if not promotion_gate.get("passed"):
+        reasons = promotion_gate.get("reasons") or []
+        reason_text = ", ".join(str(reason) for reason in reasons) if reasons else "unknown promotion gate failure"
+        raise HTTPException(status_code=409, detail=f"promotion gate failed: {reason_text}")
     MODEL_STATE["active_version"] = version
     refresh_active_model_cache()
-    return {"activated": True, "version": version, "quality_gate": quality_gate}
+    return {
+        "activated": True,
+        "version": version,
+        "quality_gate": quality_gate,
+        "promotion_gate": promotion_gate,
+    }
 
 
 def current_owner_id(request: Request) -> str:
