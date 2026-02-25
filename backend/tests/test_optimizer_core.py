@@ -10,6 +10,7 @@ from backend.optimizer_core import (
     apply_duration_target,
     append_transition_log,
     build_custom_curve,
+    recommend_crossfade_seconds,
     transition_component_breakdown,
     transition_reason,
     build_energy_curve,
@@ -266,6 +267,15 @@ def test_transition_explainability_identifies_top_component():
     )
     reason = transition_reason(components)
     assert "Tempo" in reason
+
+
+def test_crossfade_recommendation_increases_on_large_mismatch():
+    close_a = make_track("a-1", 0.4, 120.0)
+    close_b = make_track("b-1", 0.42, 122.0)
+    far_b = make_track("c-1", 0.9, 160.0)
+    short = recommend_crossfade_seconds(close_a, close_b)
+    long = recommend_crossfade_seconds(close_a, far_b)
+    assert long > short
 
 
 def test_album_gap_penalty_prefers_spaced_albums():

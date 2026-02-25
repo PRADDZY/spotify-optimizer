@@ -1315,6 +1315,7 @@ def summarize_transitions(tracks: List[Track], dist: List[List[float]], order: L
                 "to_bpm": fb.get("tempo"),
                 "from_key": key_name(fa.get("key"), fa.get("mode")),
                 "to_key": key_name(fb.get("key"), fb.get("mode")),
+                "crossfade_seconds": recommend_crossfade_seconds(tracks[a], tracks[b]),
             }
         )
 
@@ -1477,6 +1478,20 @@ def transition_reason(components: Dict[str, float]) -> str:
     return reasons.get(top_metric, "Multiple factors contribute to this transition.")
 
 
+def recommend_crossfade_seconds(from_track: Track, to_track: Track) -> float:
+    left = from_track.features or {}
+    right = to_track.features or {}
+    tempo_a = float(left.get("tempo") or 120.0)
+    tempo_b = float(right.get("tempo") or 120.0)
+    energy_a = float(left.get("energy") or 0.5)
+    energy_b = float(right.get("energy") or 0.5)
+    key_d = key_distance(left.get("key"), left.get("mode"), right.get("key"), right.get("mode"))
+    tempo_ratio = abs(tempo_a - tempo_b) / max(1.0, max(tempo_a, tempo_b))
+    energy_delta = abs(energy_a - energy_b)
+    crossfade = 3.5 + tempo_ratio * 10.0 + energy_delta * 4.0 + key_d * 1.8
+    return round(max(2.0, min(12.0, crossfade)), 1)
+
+
 def build_transition_explainability(
     tracks: List[Track],
     order: List[int],
@@ -1500,6 +1515,7 @@ def build_transition_explainability(
                 **transition_record(left_track, right_track, dist[left_idx][right_idx], pos),
                 "components": components,
                 "reason": transition_reason(components),
+                "crossfade_seconds": recommend_crossfade_seconds(left_track, right_track),
             }
         )
     return details
