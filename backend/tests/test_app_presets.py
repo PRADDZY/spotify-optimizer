@@ -1,6 +1,7 @@
 import os
 
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 import pytest
 
 os.environ.setdefault("SPOTIFY_CLIENT_ID", "test-client")
@@ -9,6 +10,7 @@ os.environ.setdefault("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
 
 from backend.app import (
     BUILTIN_PRESETS,
+    app,
     OptimizeRequest,
     apply_builtin_preset,
     edge_score_diff,
@@ -83,3 +85,20 @@ def test_validate_optimize_payload_rejects_invalid_anneal_temps():
     )
     with pytest.raises(HTTPException):
         validate_optimize_payload(payload)
+
+
+def test_model_status_endpoint_returns_expected_shape():
+    client = TestClient(app)
+    response = client.get("/model/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "active_version" in payload
+    assert "available_versions" in payload
+
+
+def test_model_train_endpoint_returns_graceful_response_when_data_is_small():
+    client = TestClient(app)
+    response = client.post("/model/train", json={"owner_scope": "all", "activate": True, "min_samples": 5000})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["trained"] is False

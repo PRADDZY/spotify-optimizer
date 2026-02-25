@@ -9,6 +9,7 @@ venv/
 
 # Local backend state
 backend/data/*.db
+backend/models/*.json
 
 # Next.js / Node
 frontend/node_modules/
