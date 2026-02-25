@@ -130,6 +130,7 @@ class OptimizeRequest(BaseModel):
     anneal_steps: int = Field(140, ge=0, le=1500)
     anneal_temp_start: float = Field(0.08, ge=0.0001, le=2.0)
     anneal_temp_end: float = Field(0.004, ge=0.0001, le=2.0)
+    max_solver_ms: Optional[int] = Field(None, ge=50, le=120000)
     lookahead_horizon: int = Field(3, ge=1, le=8)
     lookahead_decay: float = Field(0.6, ge=0.05, le=0.99)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
@@ -2083,6 +2084,7 @@ def run_optimize_tracks_for_payload(
         anneal_steps=payload.anneal_steps,
         anneal_temp_start=payload.anneal_temp_start,
         anneal_temp_end=payload.anneal_temp_end,
+        max_solver_ms=payload.max_solver_ms,
         lookahead_horizon=payload.lookahead_horizon,
         lookahead_decay=payload.lookahead_decay,
         model_weights=model_payload.get("weights"),

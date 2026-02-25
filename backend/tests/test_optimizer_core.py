@@ -34,6 +34,7 @@ from backend.optimizer_core import (
     memoize_order_objective,
     order_cost,
     order_max_edge,
+    pick_start_indices,
     resolve_weights,
 )
 
@@ -609,3 +610,73 @@ def test_optimize_order_uses_exact_seed_for_small_instances(monkeypatch):
     )
 
     assert calls["count"] == 1
+
+
+def test_optimize_order_respects_max_solver_time_budget(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.4, 0.6, 0.3],
+        [0.2, 0.0, 0.25, 0.45, 0.15],
+        [0.4, 0.25, 0.0, 0.2, 0.3],
+        [0.6, 0.45, 0.2, 0.0, 0.35],
+        [0.3, 0.15, 0.3, 0.35, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+        make_track("e-1", 0.6, 140.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 0)
+    calls = {"anneal": 0}
+    original_anneal = core.anneal_refine
+
+    def wrapped_anneal(order, objective_fn, rng, steps, temp_start, temp_end):
+        calls["anneal"] += 1
+        import time
+
+        time.sleep(0.01)
+        return original_anneal(order, objective_fn, rng, 0, temp_start, temp_end)
+
+    monkeypatch.setattr(core, "anneal_refine", wrapped_anneal)
+
+    order, _ = core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=8,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=0,
+        solver_mode="hybrid",
+        beam_width=4,
+        anneal_steps=80,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+        max_solver_ms=2,
+    )
+
+    assert sorted(order) == [0, 1, 2, 3, 4]
+    assert calls["anneal"] == 1
+
+
+def test_pick_start_indices_caps_restart_count_to_track_count():
+    dist = [
+        [0.0, 0.2, 0.3],
+        [0.2, 0.0, 0.4],
+        [0.3, 0.4, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+    ]
+    import random
+
+    starts = pick_start_indices(dist, tracks, random.Random(42), restarts=12)
+    assert len(starts) == 3
+    assert sorted(starts) == [0, 1, 2]

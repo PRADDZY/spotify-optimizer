@@ -1560,6 +1560,7 @@ def pick_start_indices(dist: List[List[float]], tracks: List[Track], rng: random
     n = len(dist)
     if n == 0:
         return []
+    target = min(n, max(1, int(restarts)))
 
     avg_dist = [sum(row) for row in dist]
     medoid = min(range(n), key=lambda i: avg_dist[i])
@@ -1583,7 +1584,7 @@ def pick_start_indices(dist: List[List[float]], tracks: List[Track], rng: random
             add_index(min(energy_pairs, key=lambda x: x[1])[0])
             add_index(max(energy_pairs, key=lambda x: x[1])[0])
 
-    while len(starts) < max(1, restarts):
+    while len(starts) < target:
         idx = rng.randrange(n)
         if idx not in starts:
             starts.append(idx)
@@ -1749,6 +1750,7 @@ def optimize_order(
     anneal_steps: int = 140,
     anneal_temp_start: float = 0.08,
     anneal_temp_end: float = 0.004,
+    max_solver_ms: Optional[int] = None,
 ) -> Tuple[List[int], float]:
     n = len(dist)
     if n == 0:
@@ -1760,6 +1762,12 @@ def optimize_order(
     best_order: Optional[List[int]] = None
     best_cost = math.inf
     objective_eval = memoize_order_objective(objective_fn)
+    deadline: Optional[float] = None
+    if max_solver_ms is not None and max_solver_ms > 0:
+        deadline = time.perf_counter() + (float(max_solver_ms) / 1000.0)
+
+    def time_budget_exceeded() -> bool:
+        return deadline is not None and time.perf_counter() >= deadline
 
     starts = pick_start_indices(dist, tracks, rng, restarts)
 
@@ -1790,8 +1798,11 @@ def optimize_order(
             candidate_orders.append(energy_seed)
 
     for order in dedupe_candidate_orders(candidate_orders):
+        if time_budget_exceeded() and best_order is not None:
+            break
+
         working = list(order)
-        if solver_mode == "hybrid":
+        if solver_mode == "hybrid" and not time_budget_exceeded():
             working = anneal_refine(
                 working,
                 objective_fn=objective_eval,
@@ -1801,11 +1812,13 @@ def optimize_order(
                 temp_end=max(1e-6, anneal_temp_end),
             )
 
-        working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_eval)
+        if not time_budget_exceeded():
+            working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_eval)
 
-        if minimax_passes > 0:
+        if minimax_passes > 0 and not time_budget_exceeded():
             working = minimax_refine(working, dist, objective_fn=objective_eval, passes=minimax_passes)
-            working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_eval)
+            if not time_budget_exceeded():
+                working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_eval)
 
         cost = objective_eval(working)
         if cost < best_cost:
@@ -2180,6 +2193,7 @@ def optimize_tracks(
     anneal_steps: int = 140,
     anneal_temp_start: float = 0.08,
     anneal_temp_end: float = 0.004,
+    max_solver_ms: Optional[int] = None,
     lookahead_horizon: int = 3,
     lookahead_decay: float = 0.6,
     model_weights: Optional[Dict[str, float]] = None,
@@ -2297,6 +2311,7 @@ def optimize_tracks(
         anneal_steps=max(0, int(anneal_steps)),
         anneal_temp_start=max(1e-6, float(anneal_temp_start)),
         anneal_temp_end=max(1e-6, float(anneal_temp_end)),
+        max_solver_ms=max(0, int(max_solver_ms)) if max_solver_ms is not None else None,
     )
 
     order = apply_fixed_endpoints(
