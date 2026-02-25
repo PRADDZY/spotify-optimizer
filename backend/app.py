@@ -906,12 +906,14 @@ def run_transitions(run_id: str):
     run = RUN_HISTORY.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    transitions = run.get("transitions", [])
     return {
         "run_id": run_id,
         "playlist_id": run.get("playlist_id"),
         "playlist_name": run.get("playlist_name"),
         "transition_score": run.get("transition_score"),
-        "transitions": run.get("transitions", []),
+        "summary": transition_summary(transitions),
+        "transitions": transitions,
     }
 
 
@@ -927,6 +929,24 @@ def run_summary_metrics(run: dict) -> dict:
     }
 
 
+def transition_summary(transitions: list[dict]) -> dict:
+    if not transitions:
+        return {"dominant_penalties": [], "worst_edges": []}
+
+    dominant_counts: dict[str, int] = {}
+    for item in transitions:
+        dominant = item.get("reason_code") or item.get("dominant_component") or "mixed_factors"
+        dominant_counts[dominant] = dominant_counts.get(dominant, 0) + 1
+
+    dominant_penalties = sorted(
+        [{"reason_code": key, "count": value} for key, value in dominant_counts.items()],
+        key=lambda row: row["count"],
+        reverse=True,
+    )[:5]
+    worst_edges = sorted(transitions, key=lambda item: float(item.get("score", 0.0)), reverse=True)[:5]
+    return {"dominant_penalties": dominant_penalties, "worst_edges": worst_edges}
+
+
 def build_run_report(run_id: str, run: dict) -> dict:
     transitions = run.get("transitions", [])
     top = sorted(transitions, key=lambda item: float(item.get("score", 0.0)), reverse=True)[:10]
@@ -938,6 +958,7 @@ def build_run_report(run_id: str, run: dict) -> dict:
         "playlist_name": run.get("playlist_name"),
         "transition_score": run.get("transition_score"),
         "metrics": run_summary_metrics(run),
+        "transition_summary": transition_summary(transitions),
         "roughest": run.get("roughest", []),
         "top_transitions": top,
         "request": run.get("request", {}),

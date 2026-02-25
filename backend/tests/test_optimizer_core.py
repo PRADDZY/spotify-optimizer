@@ -13,6 +13,8 @@ from backend.optimizer_core import (
     build_custom_curve,
     recommend_crossfade_seconds,
     transition_component_breakdown,
+    normalize_component_contributions,
+    transition_reason_code,
     transition_reason,
     variety_penalty,
     build_energy_curve,
@@ -366,3 +368,14 @@ def test_no_repeat_artist_within_constraint_rewards_spacing():
     crowded = order_cost([0, 1, 2, 3], dist, tracks, None, None, None, config)
     spaced = order_cost([0, 2, 1, 3], dist, tracks, None, None, None, config)
     assert spaced < crowded
+
+
+def test_component_contributions_normalize_to_unit_sum():
+    components = {"bpm": 0.4, "key": 0.1, "energy": 0.5}
+    shares = normalize_component_contributions(components)
+    assert abs(sum(shares.values()) - 1.0) < 1e-6
+
+
+def test_transition_reason_code_matches_dominant_component():
+    components = {"bpm": 0.01, "key": 0.7, "energy": 0.2}
+    assert transition_reason_code(components) == "harmonic_mismatch"
