@@ -32,7 +32,10 @@ from .optimizer_core import (
     parse_playlist_id,
     spotify_call_with_retry,
 )
+from .model_store import load_model_artifact, save_model_artifact
+from .modeling import transition_model_from_dict
 from .state_store import DurableDict, DurableEventBuffer, SQLiteStateStore
+from .training import train_transition_model_from_feedback
 
 load_dotenv()
 
@@ -55,6 +58,10 @@ TRANSITION_LOG_PATH = os.getenv("TRANSITION_LOG_PATH")
 STATE_RETENTION_DAYS = int(os.getenv("STATE_RETENTION_DAYS", "30"))
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1048576"))
 SECURITY_HEADERS_ENABLED = os.getenv("SECURITY_HEADERS_ENABLED", "true").lower() == "true"
+MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(os.path.dirname(__file__), "models"))
+MODEL_BLEND_ALPHA = float(os.getenv("MODEL_BLEND_ALPHA", "0.2"))
+MODEL_MIN_SAMPLES = int(os.getenv("MODEL_MIN_SAMPLES", "20"))
+MODEL_RETRAIN_INTERVAL_MINUTES = int(os.getenv("MODEL_RETRAIN_INTERVAL_MINUTES", "240"))
 
 
 class WeightConfig(BaseModel):
@@ -125,6 +132,7 @@ class OptimizeResponse(BaseModel):
     playlist_url: str
     transition_score: float
     roughest: list
+    model_version: Optional[str] = None
 
 
 class QuickFixRequest(BaseModel):
@@ -194,6 +202,12 @@ class ManualFeedbackRequest(BaseModel):
     rating: int = Field(..., ge=-2, le=2)
     feature: Optional[str] = None
     note: Optional[str] = None
+
+
+class ModelTrainRequest(BaseModel):
+    owner_scope: str = "all"
+    min_samples: Optional[int] = Field(None, ge=5, le=5000)
+    activate: bool = True
 
 
 BUILTIN_PRESETS: dict[str, dict] = {
@@ -304,6 +318,9 @@ RUN_TASK_STATUS = DurableDict(STATE_STORE, "run_task_status")
 EVENT_STORE = DurableEventBuffer(STATE_STORE, "run_event_buffer")
 REPORT_STORE = DurableDict(STATE_STORE, "report_store")
 IDEMPOTENCY_STORE = DurableDict(STATE_STORE, "idempotency_store")
+MODEL_REGISTRY = DurableDict(STATE_STORE, "model_registry")
+MODEL_STATE = DurableDict(STATE_STORE, "model_state")
+TRAINING_JOB_STORE = DurableDict(STATE_STORE, "training_job_store")
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -323,6 +340,150 @@ REQUEST_LATENCY = Histogram(
     ["method", "path"],
 )
 
+ACTIVE_MODEL_CACHE: dict[str, object] = {
+    "version": None,
+    "weights": None,
+    "bias": 0.0,
+    "sample_count": 0,
+    "trained_at": None,
+}
+
+
+def refresh_active_model_cache() -> None:
+    active_version = MODEL_STATE.get("active_version")
+    if not active_version:
+        ACTIVE_MODEL_CACHE.update(
+            {
+                "version": None,
+                "weights": None,
+                "bias": 0.0,
+                "sample_count": 0,
+                "trained_at": None,
+            }
+        )
+        return
+
+    record = MODEL_REGISTRY.get(active_version)
+    if not record:
+        ACTIVE_MODEL_CACHE.update(
+            {
+                "version": None,
+                "weights": None,
+                "bias": 0.0,
+                "sample_count": 0,
+                "trained_at": None,
+            }
+        )
+        return
+
+    artifact = load_model_artifact(record.get("artifact_path", ""))
+    if not artifact:
+        ACTIVE_MODEL_CACHE.update(
+            {
+                "version": None,
+                "weights": None,
+                "bias": 0.0,
+                "sample_count": 0,
+                "trained_at": None,
+            }
+        )
+        return
+
+    model = transition_model_from_dict(artifact)
+    ACTIVE_MODEL_CACHE.update(
+        {
+            "version": model.version,
+            "weights": model.weights,
+            "bias": model.bias,
+            "sample_count": model.sample_count,
+            "trained_at": model.trained_at,
+        }
+    )
+
+
+def active_model_payload() -> dict[str, object]:
+    if not ACTIVE_MODEL_CACHE.get("weights"):
+        return {
+            "version": None,
+            "weights": None,
+            "bias": 0.0,
+            "alpha": 0.0,
+            "sample_count": 0,
+        }
+    return {
+        "version": ACTIVE_MODEL_CACHE.get("version"),
+        "weights": ACTIVE_MODEL_CACHE.get("weights"),
+        "bias": float(ACTIVE_MODEL_CACHE.get("bias") or 0.0),
+        "alpha": max(0.0, min(1.0, MODEL_BLEND_ALPHA)),
+        "sample_count": int(ACTIVE_MODEL_CACHE.get("sample_count") or 0),
+    }
+
+
+def train_transition_model(owner_id: Optional[str], min_samples: int, activate: bool) -> dict:
+    training_job_id = uuid.uuid4().hex
+    started_at = time.time()
+    model, details = train_transition_model_from_feedback(
+        RUN_HISTORY.items(),
+        FEEDBACK_STORE.items(),
+        owner_id=owner_id,
+        min_samples=min_samples,
+    )
+
+    if not model:
+        payload = {
+            "job_id": training_job_id,
+            "trained": False,
+            "owner_scope": owner_id or "all",
+            "started_at": started_at,
+            "finished_at": time.time(),
+            **details,
+        }
+        TRAINING_JOB_STORE[training_job_id] = payload
+        return payload
+
+    artifact_path = save_model_artifact(MODEL_DIR, model.to_dict())
+    MODEL_REGISTRY[model.version] = {
+        "artifact_path": artifact_path,
+        "owner_scope": owner_id or "all",
+        "metrics": details.get("metrics", {}),
+        "sample_count": details.get("sample_count", 0),
+        "created_at": time.time(),
+    }
+
+    if activate:
+        MODEL_STATE["active_version"] = model.version
+        MODEL_STATE["last_auto_train_at"] = time.time()
+        refresh_active_model_cache()
+
+    payload = {
+        "job_id": training_job_id,
+        "trained": True,
+        "owner_scope": owner_id or "all",
+        "version": model.version,
+        "artifact_path": artifact_path,
+        "activate": activate,
+        "started_at": started_at,
+        "finished_at": time.time(),
+        **details,
+    }
+    TRAINING_JOB_STORE[training_job_id] = payload
+    return payload
+
+
+def maybe_auto_retrain_model() -> None:
+    interval = max(0, MODEL_RETRAIN_INTERVAL_MINUTES)
+    if interval <= 0:
+        return
+    now = time.time()
+    last_attempt = float(MODEL_STATE.get("last_auto_train_at", 0.0))
+    if now - last_attempt < interval * 60:
+        return
+
+    MODEL_STATE["last_auto_train_at"] = now
+    result = train_transition_model(owner_id=None, min_samples=MODEL_MIN_SAMPLES, activate=True)
+    if not result.get("trained"):
+        LOGGER.info("model_retrain_skipped", extra={"reason": result.get("reason"), "sample_count": result.get("sample_count")})
+
 
 def cleanup_state_retention() -> None:
     if STATE_RETENTION_DAYS <= 0:
@@ -335,6 +496,7 @@ def cleanup_state_retention() -> None:
         "run_task_status",
         "report_store",
         "idempotency_store",
+        "training_job_store",
     ]
     for namespace in namespaces:
         try:
@@ -978,6 +1140,8 @@ def build_run_report(run_id: str, run: dict) -> dict:
         "playlist_id": run.get("playlist_id"),
         "playlist_name": run.get("playlist_name"),
         "transition_score": run.get("transition_score"),
+        "model_version": run.get("model_version"),
+        "model_alpha": run.get("model_alpha"),
         "metrics": run_summary_metrics(run),
         "transition_summary": transition_summary(transitions),
         "roughest": run.get("roughest", []),
@@ -1220,6 +1384,46 @@ def manual_feedback(request: Request, payload: ManualFeedbackRequest):
     }
 
 
+@app.get("/model/status")
+def model_status():
+    refresh_active_model_cache()
+    versions = [
+        {"version": version, **record}
+        for version, record in MODEL_REGISTRY.items()
+    ]
+    versions.sort(key=lambda row: row.get("created_at", 0), reverse=True)
+    active = active_model_payload()
+    return {
+        "active_version": active.get("version"),
+        "alpha": active.get("alpha"),
+        "sample_count": active.get("sample_count"),
+        "min_samples": MODEL_MIN_SAMPLES,
+        "available_versions": versions[:20],
+    }
+
+
+@app.post("/model/train")
+def model_train(request: Request, payload: ModelTrainRequest):
+    if payload.owner_scope not in {"all", "me"}:
+        raise HTTPException(status_code=400, detail="owner_scope must be all or me")
+    owner_id = current_owner_id(request) if payload.owner_scope == "me" else None
+    min_samples = payload.min_samples or MODEL_MIN_SAMPLES
+    return train_transition_model(owner_id=owner_id, min_samples=min_samples, activate=payload.activate)
+
+
+@app.post("/model/activate/{version}")
+def model_activate(version: str):
+    record = MODEL_REGISTRY.get(version)
+    if not record:
+        raise HTTPException(status_code=404, detail="model version not found")
+    artifact = load_model_artifact(record.get("artifact_path", ""))
+    if not artifact:
+        raise HTTPException(status_code=404, detail="model artifact missing")
+    MODEL_STATE["active_version"] = version
+    refresh_active_model_cache()
+    return {"activated": True, "version": version}
+
+
 def current_owner_id(request: Request) -> str:
     sid = get_session_id(request)
     if sid:
@@ -1346,6 +1550,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     options = payload.options or {}
     feedback_offsets = owner_feedback_offsets(owner_id)
+    model_payload = active_model_payload()
     items = []
 
     for index, playlist in enumerate(payload.playlists):
@@ -1399,6 +1604,10 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 anneal_temp_end=cfg_payload.anneal_temp_end,
                 lookahead_horizon=cfg_payload.lookahead_horizon,
                 lookahead_decay=cfg_payload.lookahead_decay,
+                model_weights=model_payload.get("weights"),
+                model_bias=float(model_payload.get("bias") or 0.0),
+                model_alpha=float(model_payload.get("alpha") or 0.0),
+                model_version=model_payload.get("version"),
                 transition_log_path=TRANSITION_LOG_PATH,
             )
 
@@ -1426,6 +1635,8 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 "request": cfg_payload.model_dump(),
                 "public": payload.public,
                 "batch_id": batch_id,
+                "model_version": model_payload.get("version"),
+                "model_alpha": model_payload.get("alpha"),
                 "created_at": time.time(),
             }
             items.append(
@@ -1438,6 +1649,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                     "playlist_name": new_name,
                     "playlist_url": f"https://open.spotify.com/playlist/{output_playlist_id}",
                     "transition_score": round(cost, 4),
+                    "model_version": model_payload.get("version"),
                 }
             )
         except Exception as exc:
@@ -1491,6 +1703,7 @@ def run_single_optimization(
 
     weights = payload.weights.model_dump() if payload.weights else {}
     feedback_offsets = owner_feedback_offsets(owner_id)
+    model_payload = active_model_payload()
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     source_playlist_id = parse_playlist_id(payload.playlist)
     source_track_ids = fetch_playlist_track_ids(sp, source_playlist_id)
@@ -1537,6 +1750,10 @@ def run_single_optimization(
         anneal_temp_end=payload.anneal_temp_end,
         lookahead_horizon=payload.lookahead_horizon,
         lookahead_decay=payload.lookahead_decay,
+        model_weights=model_payload.get("weights"),
+        model_bias=float(model_payload.get("bias") or 0.0),
+        model_alpha=float(model_payload.get("alpha") or 0.0),
+        model_version=model_payload.get("version"),
         transition_log_path=TRANSITION_LOG_PATH,
     )
     emit_run_event(run_id, "search", 65, "Optimization complete", {"transitions": len(explainability)})
@@ -1576,6 +1793,8 @@ def run_single_optimization(
         "public": payload.public,
         "snapshot_id": snapshot_id,
         "parent_run_id": parent_run_id,
+        "model_version": model_payload.get("version"),
+        "model_alpha": model_payload.get("alpha"),
         "created_at": time.time(),
     }
 
@@ -1587,6 +1806,7 @@ def run_single_optimization(
         "playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
         "transition_score": round(cost, 4),
         "roughest": roughest,
+        "model_version": model_payload.get("version"),
     }
 
 
@@ -1778,6 +1998,7 @@ def scheduler_loop() -> None:
     while not SCHEDULER_STOP.is_set():
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
         current_tick = now.isoformat()
+        maybe_auto_retrain_model()
         if time.time() - last_cleanup > 6 * 3600:
             cleanup_state_retention()
             last_cleanup = time.time()
@@ -1799,6 +2020,7 @@ def scheduler_loop() -> None:
 @app.on_event("startup")
 def start_scheduler() -> None:
     cleanup_state_retention()
+    refresh_active_model_cache()
     if getattr(app.state, "scheduler_thread", None):
         return
     thread = threading.Thread(target=scheduler_loop, daemon=True, name="spotify-optimizer-scheduler")
@@ -1901,6 +2123,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
     sp = spotify_for_session(request)
     owner_id = current_owner_id(request)
     feedback_offsets = owner_feedback_offsets(owner_id)
+    model_payload = active_model_payload()
     weights = replay.weights.model_dump() if replay.weights else {}
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     source_playlist_id = parse_playlist_id(replay.playlist)
@@ -1946,6 +2169,10 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         anneal_temp_end=replay.anneal_temp_end,
         lookahead_horizon=replay.lookahead_horizon,
         lookahead_decay=replay.lookahead_decay,
+        model_weights=model_payload.get("weights"),
+        model_bias=float(model_payload.get("bias") or 0.0),
+        model_alpha=float(model_payload.get("alpha") or 0.0),
+        model_version=model_payload.get("version"),
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
@@ -1971,6 +2198,8 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "request": replay.model_dump(),
         "public": replay.public,
         "parent_run_id": run_id,
+        "model_version": model_payload.get("version"),
+        "model_alpha": model_payload.get("alpha"),
         "created_at": time.time(),
     }
 
@@ -1981,4 +2210,5 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "playlist_url": f"https://open.spotify.com/playlist/{new_playlist_id}",
         "transition_score": round(cost, 4),
         "roughest": roughest,
+        "model_version": model_payload.get("version"),
     }

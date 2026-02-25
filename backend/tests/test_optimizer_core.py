@@ -12,6 +12,7 @@ from backend.optimizer_core import (
     anneal_refine,
     append_transition_log,
     beam_search_order,
+    blend_distance_matrix_with_model,
     build_custom_curve,
     recommend_crossfade_seconds,
     transition_component_breakdown,
@@ -428,3 +429,38 @@ def test_lookahead_penalty_prefers_steady_future_edges():
     spiky = lookahead_penalty([0, 1, 2, 3], dist, horizon=3, decay=0.6)
     steady = lookahead_penalty([0, 2, 1, 3], dist, horizon=3, decay=0.6)
     assert steady < spiky
+
+
+def test_blend_distance_matrix_with_model_influences_scores():
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.8, 140.0),
+    ]
+    context = FeatureContext(
+        scales={
+            "energy": 0.2,
+            "valence": 0.2,
+            "danceability": 0.2,
+            "loudness": 5.0,
+        }
+    )
+    dist = [[0.0, 0.2], [0.2, 0.0]]
+    blended = blend_distance_matrix_with_model(
+        dist=dist,
+        tracks=tracks,
+        context=context,
+        bpm_window=0.08,
+        model_weights={
+            "bpm_component": 1.2,
+            "key_component": 1.1,
+            "energy_component": 0.8,
+            "valence_component": 0.4,
+            "dance_component": 0.4,
+            "loudness_component": 0.2,
+            "tempo_jump": 0.8,
+            "energy_jump": 0.5,
+        },
+        model_bias=0.0,
+        model_alpha=0.5,
+    )
+    assert blended[0][1] > 0.2

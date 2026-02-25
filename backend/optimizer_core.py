@@ -98,6 +98,17 @@ VIBE_WEIGHTS: Dict[str, float] = {
 
 FLOW_CURVE_WEIGHT = 0.2
 
+MODEL_FEATURE_KEYS = [
+    "bpm_component",
+    "key_component",
+    "energy_component",
+    "valence_component",
+    "dance_component",
+    "loudness_component",
+    "tempo_jump",
+    "energy_jump",
+]
+
 
 @dataclass
 class Track:
@@ -703,6 +714,88 @@ def track_distance(
         score += 0.05
 
     return clamp01(score)
+
+
+def model_transition_features(
+    from_track: Track,
+    to_track: Track,
+    bpm_window: float,
+    context: FeatureContext,
+) -> Dict[str, float]:
+    f1 = from_track.features or {}
+    f2 = to_track.features or {}
+    bpm_component = bpm_distance(f1.get("tempo"), f2.get("tempo"), bpm_window)
+    key_component = key_distance(f1.get("key"), f1.get("mode"), f2.get("key"), f2.get("mode"))
+    energy_component = scaled_diff(f1.get("energy"), f2.get("energy"), context.scales.get("energy", 0.1))
+    valence_component = scaled_diff(f1.get("valence"), f2.get("valence"), context.scales.get("valence", 0.1))
+    dance_component = scaled_diff(
+        f1.get("danceability"),
+        f2.get("danceability"),
+        context.scales.get("danceability", 0.1),
+    )
+    loudness_component = loudness_distance(
+        f1.get("loudness"),
+        f2.get("loudness"),
+        context.scales.get("loudness", 6.0),
+    )
+    tempo_a = f1.get("tempo")
+    tempo_b = f2.get("tempo")
+    if tempo_a is None or tempo_b is None:
+        tempo_jump = 0.5
+    else:
+        tempo_jump = clamp01(abs(float(tempo_a) - float(tempo_b)) / max(80.0, max(float(tempo_a), float(tempo_b))))
+    energy_jump = abs(float(f1.get("energy") or 0.5) - float(f2.get("energy") or 0.5))
+    return {
+        "bpm_component": bpm_component,
+        "key_component": key_component,
+        "energy_component": energy_component,
+        "valence_component": valence_component,
+        "dance_component": dance_component,
+        "loudness_component": loudness_component,
+        "tempo_jump": clamp01(tempo_jump),
+        "energy_jump": clamp01(energy_jump),
+    }
+
+
+def model_predict_roughness(features: Dict[str, float], weights: Dict[str, float], bias: float) -> float:
+    z = float(bias)
+    for key in MODEL_FEATURE_KEYS:
+        z += float(weights.get(key, 0.0)) * float(features.get(key, 0.0))
+    if z >= 0:
+        exp_term = math.exp(-z)
+        return 1.0 / (1.0 + exp_term)
+    exp_term = math.exp(z)
+    return exp_term / (1.0 + exp_term)
+
+
+def blend_distance_matrix_with_model(
+    dist: List[List[float]],
+    tracks: List[Track],
+    context: FeatureContext,
+    bpm_window: float,
+    model_weights: Optional[Dict[str, float]],
+    model_bias: float,
+    model_alpha: float,
+) -> List[List[float]]:
+    if not model_weights:
+        return dist
+    alpha = clamp01(float(model_alpha))
+    if alpha <= 0:
+        return dist
+
+    n = len(dist)
+    for i in range(n):
+        for j in range(i + 1, n):
+            fwd = model_transition_features(tracks[i], tracks[j], bpm_window, context)
+            bwd = model_transition_features(tracks[j], tracks[i], bpm_window, context)
+            model_score = (
+                model_predict_roughness(fwd, model_weights, model_bias)
+                + model_predict_roughness(bwd, model_weights, model_bias)
+            ) / 2.0
+            blended = (1.0 - alpha) * dist[i][j] + alpha * model_score
+            dist[i][j] = clamp01(blended)
+            dist[j][i] = dist[i][j]
+    return dist
 
 
 def build_distance_matrix(
@@ -1926,6 +2019,10 @@ def optimize_tracks(
     anneal_temp_end: float = 0.004,
     lookahead_horizon: int = 3,
     lookahead_decay: float = 0.6,
+    model_weights: Optional[Dict[str, float]] = None,
+    model_bias: float = 0.0,
+    model_alpha: float = 0.0,
+    model_version: Optional[str] = None,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1951,6 +2048,15 @@ def optimize_tracks(
     resolved_weights = apply_weight_offsets(resolved_weights, feedback_offsets)
     context = build_feature_context(with_features)
     dist = build_distance_matrix(with_features, resolved_weights, bpm_window, context)
+    dist = blend_distance_matrix_with_model(
+        dist,
+        with_features,
+        context=context,
+        bpm_window=bpm_window,
+        model_weights=model_weights,
+        model_bias=model_bias,
+        model_alpha=model_alpha,
+    )
 
     config = OptimizationConfig(
         flow_curve=flow_curve,

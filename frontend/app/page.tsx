@@ -62,6 +62,13 @@ type CompareResult = {
   most_regressed?: CompareEdgeDiff[];
 };
 
+type ModelStatus = {
+  active_version: string | null;
+  alpha: number;
+  sample_count: number;
+  available_versions: Array<{ version: string; sample_count?: number; created_at?: number }>;
+};
+
 type Profile = {
   id: string;
   display_name: string;
@@ -201,6 +208,9 @@ export default function HomePage() {
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [compareError, setCompareError] = useState("");
   const [isComparing, setIsComparing] = useState(false);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const [modelMessage, setModelMessage] = useState("");
+  const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -232,6 +242,22 @@ export default function HomePage() {
       .catch(() => undefined);
     return () => controller.abort();
   }, [apiBase]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${apiBase}/model/status`, {
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (payload) {
+          setModelStatus(payload as ModelStatus);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [apiBase, result?.run_id]);
 
   useEffect(() => {
     if (!result?.run_id) {
@@ -443,6 +469,39 @@ export default function HomePage() {
       setCompareError("Failed to compare runs.");
     } finally {
       setIsComparing(false);
+    }
+  };
+
+  const handleTrainModel = async () => {
+    setModelMessage("");
+    setIsTrainingModel(true);
+    try {
+      const response = await fetch(`${apiBase}/model/train`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ owner_scope: "all", activate: true }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setModelMessage(payload?.detail ?? "Model training failed.");
+        return;
+      }
+      if (payload?.trained) {
+        setModelMessage(`Model trained: ${payload.version}`);
+      } else {
+        setModelMessage(payload?.reason ?? "Not enough labeled transitions yet.");
+      }
+      const statusResponse = await fetch(`${apiBase}/model/status`, {
+        credentials: "include",
+      });
+      if (statusResponse.ok) {
+        setModelStatus((await statusResponse.json()) as ModelStatus);
+      }
+    } catch {
+      setModelMessage("Failed to reach model training endpoint.");
+    } finally {
+      setIsTrainingModel(false);
     }
   };
 
@@ -1034,6 +1093,35 @@ export default function HomePage() {
                 )}
               </div>
             )}
+          </div>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>Transition Model</h2>
+            <p className="disclaimer">
+              Learns from explicit manual feedback labels to refine future transition
+              scoring. Uses heuristic fallback when no model is active.
+            </p>
+            <div className="list">
+              <div className="list-item">
+                Active: {modelStatus?.active_version ?? "none"}
+              </div>
+              <div className="list-item">
+                Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
+              </div>
+              <div className="list-item">
+                Samples: {modelStatus?.sample_count ?? 0}
+              </div>
+            </div>
+            <div className="button-row" style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={handleTrainModel}
+                disabled={isTrainingModel}
+              >
+                {isTrainingModel ? "Training..." : "Train model"}
+              </button>
+            </div>
+            {modelMessage && <div className="status">{modelMessage}</div>}
           </div>
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Keep in Mind</h2>
