@@ -41,6 +41,13 @@ type WeightKey =
 
 type WeightState = Record<WeightKey, number>;
 
+type BuiltinPreset = {
+  preset_id: string;
+  name: string;
+  description: string;
+  config: Record<string, unknown>;
+};
+
 const defaultApi = "http://localhost:8000";
 
 const DEFAULT_WEIGHTS: WeightState = {
@@ -56,6 +63,39 @@ const DEFAULT_WEIGHTS: WeightState = {
   liveness: 0.01,
   time_signature: 0.02,
 };
+
+const FALLBACK_PRESETS: BuiltinPreset[] = [
+  {
+    preset_id: "warmup",
+    name: "Warmup",
+    description: "Gentle energy ramp with harmonic-safe transitions.",
+    config: {},
+  },
+  {
+    preset_id: "peak_hour",
+    name: "Peak Hour",
+    description: "Max momentum and punch with controlled cuts.",
+    config: {},
+  },
+  {
+    preset_id: "cooldown_set",
+    name: "Cooldown",
+    description: "Gradually lowers intensity and keeps vibe continuity.",
+    config: {},
+  },
+  {
+    preset_id: "workout",
+    name: "Workout",
+    description: "Stable tempo and steady energy drive.",
+    config: {},
+  },
+  {
+    preset_id: "chill",
+    name: "Chill",
+    description: "Low-contrast transitions with mood consistency.",
+    config: {},
+  },
+];
 
 const WEIGHT_FIELDS: Array<{ key: WeightKey; label: string; max: number }> = [
   { key: "bpm", label: "BPM", max: 1 },
@@ -79,6 +119,9 @@ export default function HomePage() {
   const [playlist, setPlaylist] = useState("");
   const [mixName, setMixName] = useState("");
   const [isPublic, setIsPublic] = useState(false);
+  const [presetId, setPresetId] = useState<string>("");
+  const [builtinPresets, setBuiltinPresets] =
+    useState<BuiltinPreset[]>(FALLBACK_PRESETS);
   const [mixMode, setMixMode] = useState<"balanced" | "harmonic" | "vibe">(
     "harmonic"
   );
@@ -116,6 +159,22 @@ export default function HomePage() {
     return () => controller.abort();
   }, [apiBase]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${apiBase}/presets/builtin`, {
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.items) && data.items.length > 0) {
+          setBuiltinPresets(data.items as BuiltinPreset[]);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [apiBase]);
+
   const handleConnect = () => {
     window.location.href = `${apiBase}/login`;
   };
@@ -127,6 +186,11 @@ export default function HomePage() {
   const updateWeight = (key: WeightKey, value: number) => {
     setWeights((prev) => ({ ...prev, [key]: value }));
   };
+
+  const activePreset = useMemo(
+    () => builtinPresets.find((item) => item.preset_id === presetId) ?? null,
+    [builtinPresets, presetId]
+  );
 
   const resetObjective = () => {
     setWeights({ ...DEFAULT_WEIGHTS });
@@ -176,6 +240,7 @@ export default function HomePage() {
             playlist,
             name: mixName || undefined,
             public: isPublic,
+            preset_id: presetId || undefined,
             mix_mode: mixMode,
             flow_curve: flowCurve,
             flow_profile: flowProfile,
@@ -259,6 +324,25 @@ export default function HomePage() {
             value={mixName}
             onChange={(event) => setMixName(event.target.value)}
           />
+
+          <label htmlFor="preset">Preset mode</label>
+          <select
+            id="preset"
+            value={presetId}
+            onChange={(event) => setPresetId(event.target.value)}
+          >
+            <option value="">Manual tuning</option>
+            {builtinPresets.map((preset) => (
+              <option key={preset.preset_id} value={preset.preset_id}>
+                {preset.name}
+              </option>
+            ))}
+          </select>
+          {activePreset && (
+            <div className="status">
+              Preset: <strong>{activePreset.name}</strong> — {activePreset.description}
+            </div>
+          )}
 
           <label>Mix focus</label>
           <div className="segmented segmented-3" role="group" aria-label="Mix focus">

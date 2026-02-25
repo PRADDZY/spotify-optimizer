@@ -80,6 +80,7 @@ class OptimizeRequest(BaseModel):
     playlist: str
     name: Optional[str] = None
     public: bool = False
+    preset_id: Optional[str] = None
     mix_mode: str = "balanced"
     flow_curve: bool = False
     flow_profile: str = "peak"
@@ -184,6 +185,79 @@ class ManualFeedbackRequest(BaseModel):
     rating: int = Field(..., ge=-2, le=2)
     feature: Optional[str] = None
     note: Optional[str] = None
+
+
+BUILTIN_PRESETS: dict[str, dict] = {
+    "warmup": {
+        "name": "Warmup",
+        "description": "Gentle energy ramp with harmonic-safe transitions.",
+        "config": {
+            "mix_mode": "balanced",
+            "flow_curve": True,
+            "flow_profile": "gentle",
+            "key_lock_window": 4,
+            "tempo_ramp_weight": 0.1,
+            "minimax_passes": 2,
+            "smoothness_weight": 1.15,
+            "variety_weight": 0.2,
+        },
+    },
+    "peak_hour": {
+        "name": "Peak Hour",
+        "description": "Maximizes momentum and punch while keeping cuts controlled.",
+        "config": {
+            "mix_mode": "harmonic",
+            "flow_curve": True,
+            "flow_profile": "peak",
+            "key_lock_window": 5,
+            "tempo_ramp_weight": 0.12,
+            "minimax_passes": 3,
+            "smoothness_weight": 1.3,
+            "variety_weight": 0.3,
+        },
+    },
+    "cooldown_set": {
+        "name": "Cooldown",
+        "description": "Gradually lowers intensity and preserves vibe continuity.",
+        "config": {
+            "mix_mode": "vibe",
+            "flow_curve": True,
+            "flow_profile": "cooldown",
+            "tempo_ramp_weight": 0.08,
+            "minimax_passes": 2,
+            "smoothness_weight": 1.05,
+            "variety_weight": 0.25,
+        },
+    },
+    "workout": {
+        "name": "Workout",
+        "description": "Keeps tempo stable with tighter BPM guardrails and less downtime.",
+        "config": {
+            "mix_mode": "balanced",
+            "flow_curve": True,
+            "flow_profile": "peak",
+            "tempo_ramp_weight": 0.15,
+            "minimax_passes": 3,
+            "max_bpm_jump": 12,
+            "smoothness_weight": 1.25,
+            "variety_weight": 0.2,
+        },
+    },
+    "chill": {
+        "name": "Chill",
+        "description": "Low-contrast transitions prioritizing mood consistency.",
+        "config": {
+            "mix_mode": "vibe",
+            "flow_curve": True,
+            "flow_profile": "gentle",
+            "tempo_ramp_weight": 0.06,
+            "minimax_passes": 2,
+            "max_bpm_jump": 8,
+            "smoothness_weight": 1.1,
+            "variety_weight": 0.15,
+        },
+    },
+}
 
 
 def setup_logging() -> logging.Logger:
@@ -674,9 +748,34 @@ def suggest_anchors(request: Request, payload: AnchorSuggestRequest):
     }
 
 
+def apply_builtin_preset(payload: OptimizeRequest) -> OptimizeRequest:
+    if not payload.preset_id:
+        return payload
+    preset = BUILTIN_PRESETS.get(payload.preset_id)
+    if not preset:
+        raise HTTPException(status_code=400, detail="unknown preset_id")
+
+    merged = payload.model_dump()
+    merged.update(preset.get("config", {}))
+    merged.update(payload.model_dump(exclude_unset=True))
+    merged["preset_id"] = payload.preset_id
+    return OptimizeRequest(**merged)
+
+
+@app.get("/presets/builtin")
+def list_builtin_presets():
+    return {
+        "items": [
+            {"preset_id": preset_id, **value}
+            for preset_id, value in BUILTIN_PRESETS.items()
+        ]
+    }
+
+
 @app.post("/optimize", response_model=OptimizeResponse)
 @limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize(request: Request, payload: OptimizeRequest):
+    payload = apply_builtin_preset(payload)
     if payload.missing not in {"append", "drop"}:
         raise HTTPException(status_code=400, detail="missing must be append or drop")
     if payload.mix_mode not in {"balanced", "harmonic", "vibe"}:
@@ -710,7 +809,7 @@ def async_optimize_job(run_id: str, sid: str, owner_id: str, payload_dict: dict)
         sp = spotify_for_sid(sid)
         if not sp:
             raise RuntimeError("session expired or missing for async run")
-        payload = OptimizeRequest(**payload_dict)
+        payload = apply_builtin_preset(OptimizeRequest(**payload_dict))
         result = run_single_optimization(
             sp=sp,
             owner_id=owner_id,
@@ -737,6 +836,7 @@ def async_optimize_job(run_id: str, sid: str, owner_id: str, payload_dict: dict)
 @app.post("/optimize/async")
 @limiter.limit(RATE_LIMIT_OPTIMIZE)
 def optimize_async(request: Request, payload: OptimizeRequest):
+    payload = apply_builtin_preset(payload)
     sid = get_session_id(request)
     if not sid:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1159,6 +1259,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
             cfg = dict(options)
             cfg.pop("playlist", None)
             cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
+            cfg_payload = apply_builtin_preset(cfg_payload)
             weights = cfg_payload.weights.model_dump() if cfg_payload.weights else {}
             source_playlist_id = parse_playlist_id(cfg_payload.playlist)
 
