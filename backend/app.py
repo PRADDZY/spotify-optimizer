@@ -71,6 +71,7 @@ class OptimizeRequest(BaseModel):
     locked_blocks: Optional[list[list[str]]] = None
     artist_gap: int = Field(0, ge=0, le=20)
     album_gap: int = Field(0, ge=0, le=20)
+    explicit_mode: str = "allow"
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -487,6 +488,8 @@ def optimize(request: Request, payload: OptimizeRequest):
         raise HTTPException(status_code=400, detail="mix_mode must be balanced, harmonic, or vibe")
     if payload.flow_profile not in {"peak", "gentle", "cooldown"}:
         raise HTTPException(status_code=400, detail="flow_profile must be peak, gentle, or cooldown")
+    if payload.explicit_mode not in {"allow", "prefer_clean", "clean_only"}:
+        raise HTTPException(status_code=400, detail="explicit_mode must be allow, prefer_clean, or clean_only")
 
     sp = spotify_for_session(request)
 
@@ -516,6 +519,7 @@ def optimize(request: Request, payload: OptimizeRequest):
         locked_blocks=payload.locked_blocks,
         artist_gap=payload.artist_gap,
         album_gap=payload.album_gap,
+        explicit_mode=payload.explicit_mode,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 

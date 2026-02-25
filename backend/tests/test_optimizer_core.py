@@ -5,6 +5,7 @@ from backend.optimizer_core import (
     Track,
     apply_fixed_endpoints,
     apply_locked_blocks,
+    apply_explicit_filter,
     append_transition_log,
     build_energy_curve,
     minimax_refine,
@@ -159,6 +160,15 @@ def test_artist_gap_penalty_prefers_spaced_artists():
     crowded = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
     spaced = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
     assert spaced < crowded
+
+
+def test_explicit_filter_removes_explicit_tracks_in_clean_only_mode():
+    clean = make_track("artist1-album1-a", 0.2, 100.0)
+    explicit = make_track("artist2-album2-b", 0.4, 110.0)
+    explicit.explicit = True
+    filtered = apply_explicit_filter([clean, explicit], "clean_only")
+    assert len(filtered) == 1
+    assert filtered[0].id == clean.id
 
 
 def test_album_gap_penalty_prefers_spaced_albums():

@@ -125,6 +125,7 @@ class OptimizationConfig:
     minimax_passes: int = 2
     artist_gap: int = 0
     album_gap: int = 0
+    explicit_mode: str = "allow"
 
 
 def parse_playlist_id(value: str) -> str:
@@ -685,6 +686,13 @@ def repetition_gap_penalty(
     return penalty / checks
 
 
+def explicit_penalty(order: List[int], tracks: List[Track], mode: str) -> float:
+    if mode != "prefer_clean" or not order:
+        return 0.0
+    explicit_count = sum(1 for idx in order if tracks[idx].explicit)
+    return explicit_count / max(1, len(order))
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -724,6 +732,8 @@ def order_cost(
             config.album_gap,
             key_fn=lambda track: track.album_id,
         )
+    if config.explicit_mode == "prefer_clean":
+        cost += 0.08 * explicit_penalty(order, tracks, config.explicit_mode)
 
     return cost
 
@@ -1213,6 +1223,12 @@ def apply_locked_blocks(
     return merged
 
 
+def apply_explicit_filter(tracks: List[Track], explicit_mode: str) -> List[Track]:
+    if explicit_mode != "clean_only":
+        return tracks
+    return [track for track in tracks if not track.explicit]
+
+
 def transition_record(from_track: Track, to_track: Track, score: float, index: int) -> Dict:
     from_features = from_track.features or {}
     to_features = to_track.features or {}
@@ -1316,6 +1332,7 @@ def optimize_tracks(
     locked_blocks: Optional[List[List[str]]] = None,
     artist_gap: int = 0,
     album_gap: int = 0,
+    explicit_mode: str = "allow",
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1324,8 +1341,9 @@ def optimize_tracks(
 
     enrich_audio_features(sp, tracks, cache_path)
 
-    with_features = [t for t in tracks if track_has_essential_features(t.features)]
-    missing_tracks = [t for t in tracks if not track_has_essential_features(t.features)]
+    filtered_tracks = apply_explicit_filter(tracks, explicit_mode)
+    with_features = [t for t in filtered_tracks if track_has_essential_features(t.features)]
+    missing_tracks = [t for t in filtered_tracks if not track_has_essential_features(t.features)]
 
     if not with_features:
         raise RuntimeError("No tracks had the required key/tempo features to optimize.")
@@ -1343,6 +1361,7 @@ def optimize_tracks(
         minimax_passes=max(0, minimax_passes),
         artist_gap=max(0, artist_gap),
         album_gap=max(0, album_gap),
+        explicit_mode=explicit_mode,
     )
 
     energy_targets: Optional[List[float]] = None
