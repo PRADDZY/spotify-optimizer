@@ -426,8 +426,22 @@ def active_model_payload() -> dict[str, object]:
     }
 
 
-def train_transition_model(owner_id: Optional[str], min_samples: int, activate: bool) -> dict:
-    training_job_id = uuid.uuid4().hex
+def update_training_job(job_id: str, **updates) -> dict:
+    current = dict(TRAINING_JOB_STORE.get(job_id, {}))
+    current.update(updates)
+    current["updated_at"] = time.time()
+    TRAINING_JOB_STORE[job_id] = current
+    return current
+
+
+def has_active_training_job() -> bool:
+    for _, row in TRAINING_JOB_STORE.items():
+        if row.get("status") in {"queued", "running"}:
+            return True
+    return False
+
+
+def execute_transition_training(owner_id: Optional[str], min_samples: int, activate: bool) -> dict:
     started_at = time.time()
     model, details = train_transition_model_from_feedback(
         RUN_HISTORY.items(),
@@ -437,16 +451,13 @@ def train_transition_model(owner_id: Optional[str], min_samples: int, activate: 
     )
 
     if not model:
-        payload = {
-            "job_id": training_job_id,
+        return {
             "trained": False,
             "owner_scope": owner_id or "all",
             "started_at": started_at,
             "finished_at": time.time(),
             **details,
         }
-        TRAINING_JOB_STORE[training_job_id] = payload
-        return payload
 
     artifact_path = save_model_artifact(MODEL_DIR, model.to_dict())
     MODEL_REGISTRY[model.version] = {
@@ -462,8 +473,7 @@ def train_transition_model(owner_id: Optional[str], min_samples: int, activate: 
         MODEL_STATE["last_auto_train_at"] = time.time()
         refresh_active_model_cache()
 
-    payload = {
-        "job_id": training_job_id,
+    return {
         "trained": True,
         "owner_scope": owner_id or "all",
         "version": model.version,
@@ -473,8 +483,65 @@ def train_transition_model(owner_id: Optional[str], min_samples: int, activate: 
         "finished_at": time.time(),
         **details,
     }
-    TRAINING_JOB_STORE[training_job_id] = payload
-    return payload
+
+
+def run_training_job(
+    job_id: str,
+    owner_id: Optional[str],
+    min_samples: int,
+    activate: bool,
+    trigger: str,
+) -> None:
+    update_training_job(job_id, status="running", progress=20, started_at=time.time())
+    try:
+        result = execute_transition_training(owner_id=owner_id, min_samples=min_samples, activate=activate)
+        update_training_job(
+            job_id,
+            status="completed",
+            progress=100,
+            finished_at=time.time(),
+            trigger=trigger,
+            result=result,
+            error=None,
+        )
+    except Exception as exc:
+        LOGGER.exception("model_training_failed", extra={"job_id": job_id, "trigger": trigger})
+        update_training_job(
+            job_id,
+            status="failed",
+            progress=100,
+            finished_at=time.time(),
+            trigger=trigger,
+            error=str(exc),
+        )
+
+
+def queue_training_job(
+    owner_id: Optional[str],
+    min_samples: int,
+    activate: bool,
+    trigger: str = "manual",
+) -> dict:
+    job_id = uuid.uuid4().hex
+    created_at = time.time()
+    TRAINING_JOB_STORE[job_id] = {
+        "status": "queued",
+        "progress": 0,
+        "owner_scope": owner_id or "all",
+        "min_samples": min_samples,
+        "activate": bool(activate),
+        "trigger": trigger,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+    worker = threading.Thread(
+        target=run_training_job,
+        args=(job_id, owner_id, min_samples, activate, trigger),
+        daemon=True,
+        name=f"model-train-{job_id[:8]}",
+    )
+    worker.start()
+    return {"job_id": job_id, **TRAINING_JOB_STORE.get(job_id, {})}
 
 
 def maybe_auto_retrain_model() -> None:
@@ -486,10 +553,11 @@ def maybe_auto_retrain_model() -> None:
     if now - last_attempt < interval * 60:
         return
 
+    if has_active_training_job():
+        return
+
     MODEL_STATE["last_auto_train_at"] = now
-    result = train_transition_model(owner_id=None, min_samples=MODEL_MIN_SAMPLES, activate=True)
-    if not result.get("trained"):
-        LOGGER.info("model_retrain_skipped", extra={"reason": result.get("reason"), "sample_count": result.get("sample_count")})
+    queue_training_job(owner_id=None, min_samples=MODEL_MIN_SAMPLES, activate=True, trigger="auto")
 
 
 def cleanup_state_retention() -> None:
@@ -1439,7 +1507,22 @@ def model_train(request: Request, payload: ModelTrainRequest):
         raise HTTPException(status_code=400, detail="owner_scope must be all or me")
     owner_id = require_authenticated_owner_id(request) if payload.owner_scope == "me" else None
     min_samples = payload.min_samples or MODEL_MIN_SAMPLES
-    return train_transition_model(owner_id=owner_id, min_samples=min_samples, activate=payload.activate)
+    return queue_training_job(
+        owner_id=owner_id,
+        min_samples=min_samples,
+        activate=payload.activate,
+        trigger="manual",
+    )
+
+
+@app.get("/model/train/{job_id}")
+@limiter.limit(RATE_LIMIT_MODEL_STATUS)
+def model_train_status(request: Request, job_id: str):
+    _ = require_model_admin(request)
+    job = TRAINING_JOB_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="training job not found")
+    return {"job_id": job_id, **job}
 
 
 @app.post("/model/activate/{version}")

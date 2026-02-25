@@ -69,6 +69,19 @@ type ModelStatus = {
   available_versions: Array<{ version: string; sample_count?: number; created_at?: number }>;
 };
 
+type ModelTrainingJob = {
+  job_id: string;
+  status: string;
+  progress: number;
+  result?: {
+    trained?: boolean;
+    version?: string;
+    reason?: string;
+    sample_count?: number;
+  };
+  error?: string | null;
+};
+
 type Profile = {
   id: string;
   display_name: string;
@@ -209,6 +222,7 @@ export default function HomePage() {
   const [compareError, setCompareError] = useState("");
   const [isComparing, setIsComparing] = useState(false);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const [modelTrainingJob, setModelTrainingJob] = useState<ModelTrainingJob | null>(null);
   const [modelMessage, setModelMessage] = useState("");
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -474,6 +488,7 @@ export default function HomePage() {
 
   const handleTrainModel = async () => {
     setModelMessage("");
+    setModelTrainingJob(null);
     setIsTrainingModel(true);
     try {
       const response = await fetch(`${apiBase}/model/train`, {
@@ -487,17 +502,55 @@ export default function HomePage() {
         setModelMessage(payload?.detail ?? "Model training failed.");
         return;
       }
-      if (payload?.trained) {
-        setModelMessage(`Model trained: ${payload.version}`);
-      } else {
-        setModelMessage(payload?.reason ?? "Not enough labeled transitions yet.");
+      const queuedJobId = payload?.job_id;
+      if (!queuedJobId) {
+        setModelMessage("Training job was not queued correctly.");
+        return;
       }
-      const statusResponse = await fetch(`${apiBase}/model/status`, {
-        credentials: "include",
-      });
-      if (statusResponse.ok) {
-        setModelStatus((await statusResponse.json()) as ModelStatus);
+      setModelTrainingJob(payload as ModelTrainingJob);
+      setModelMessage("Training queued...");
+
+      const pollDeadline = Date.now() + 120_000;
+      while (Date.now() < pollDeadline) {
+        const statusResponse = await fetch(`${apiBase}/model/train/${queuedJobId}`, {
+          credentials: "include",
+        });
+        const statusPayload = (await statusResponse.json()) as ModelTrainingJob & {
+          detail?: string;
+        };
+        if (!statusResponse.ok) {
+          setModelMessage(statusPayload?.detail ?? "Failed to fetch training job status.");
+          return;
+        }
+
+        setModelTrainingJob(statusPayload);
+        if (statusPayload.status === "completed") {
+          const resultPayload = statusPayload.result ?? {};
+          if (resultPayload.trained) {
+            setModelMessage(`Model trained: ${resultPayload.version}`);
+          } else {
+            setModelMessage(
+              resultPayload.reason ?? "Training completed without enough labeled transitions."
+            );
+          }
+          const refreshedStatus = await fetch(`${apiBase}/model/status`, {
+            credentials: "include",
+          });
+          if (refreshedStatus.ok) {
+            setModelStatus((await refreshedStatus.json()) as ModelStatus);
+          }
+          return;
+        }
+        if (statusPayload.status === "failed") {
+          setModelMessage(statusPayload.error ?? "Model training failed.");
+          return;
+        }
+
+        setModelMessage(`Training ${statusPayload.status} (${statusPayload.progress ?? 0}%)`);
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
+
+      setModelMessage("Training is still running. You can check status shortly.");
     } catch {
       setModelMessage("Failed to reach model training endpoint.");
     } finally {
@@ -1121,14 +1174,21 @@ export default function HomePage() {
                 {isTrainingModel ? "Training..." : "Train model"}
               </button>
             </div>
+            {modelTrainingJob && (
+              <div className="list" style={{ marginTop: 12 }}>
+                <div className="list-item">Job: {modelTrainingJob.job_id}</div>
+                <div className="list-item">Status: {modelTrainingJob.status}</div>
+                <div className="list-item">Progress: {modelTrainingJob.progress ?? 0}%</div>
+              </div>
+            )}
             {modelMessage && <div className="status">{modelMessage}</div>}
           </div>
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Keep in Mind</h2>
             <p className="disclaimer">
               Spotify has marked its audio-features endpoints as deprecated. This
-              tool is built for personal use and does not train any models on
-              Spotify content.
+              tool is built for personal use. Transition model training is based
+              on explicit user feedback labels and transition diagnostics.
             </p>
           </div>
         </div>

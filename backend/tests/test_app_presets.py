@@ -40,6 +40,20 @@ def make_authenticated_client(user_id: str = "tester") -> TestClient:
     return client
 
 
+def wait_for_training_job(client: TestClient, job_id: str, timeout_seconds: float = 5.0) -> dict:
+    deadline = time.time() + timeout_seconds
+    last_payload: dict = {}
+    while time.time() < deadline:
+        response = client.get(f"/model/train/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        last_payload = payload
+        if payload.get("status") in {"completed", "failed"}:
+            return payload
+        time.sleep(0.05)
+    return last_payload
+
+
 def test_apply_builtin_preset_populates_profile_defaults():
     payload = OptimizeRequest(playlist="abc123", preset_id="warmup")
     resolved = apply_builtin_preset(payload)
@@ -137,8 +151,14 @@ def test_model_train_endpoint_returns_graceful_response_when_data_is_small(monke
     client = make_authenticated_client("admin-user")
     response = client.post("/model/train", json={"owner_scope": "all", "activate": True, "min_samples": 5000})
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["trained"] is False
+    queued = response.json()
+    assert queued["status"] in {"queued", "running"}
+    assert "job_id" in queued
+
+    final_payload = wait_for_training_job(client, queued["job_id"])
+    assert final_payload.get("status") == "completed"
+    result = final_payload.get("result") or {}
+    assert result.get("trained") is False
 
 
 def test_model_train_endpoint_rejects_non_admin(monkeypatch):
@@ -146,3 +166,14 @@ def test_model_train_endpoint_rejects_non_admin(monkeypatch):
     client = make_authenticated_client("normal-user")
     response = client.post("/model/train", json={"owner_scope": "all", "activate": True, "min_samples": 5000})
     assert response.status_code == 403
+
+
+def test_model_train_status_rejects_non_admin(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    admin_client = make_authenticated_client("admin-user")
+    normal_client = make_authenticated_client("normal-user")
+    response = admin_client.post("/model/train", json={"owner_scope": "all", "activate": True, "min_samples": 5000})
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+    forbidden = normal_client.get(f"/model/train/{job_id}")
+    assert forbidden.status_code == 403
