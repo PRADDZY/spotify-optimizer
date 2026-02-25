@@ -127,6 +127,7 @@ class OptimizationConfig:
     album_gap: int = 0
     explicit_mode: str = "allow"
     genre_cluster_strength: float = 0.0
+    bpm_guardrails: List[float] = field(default_factory=list)
 
 
 def parse_playlist_id(value: str) -> str:
@@ -793,6 +794,42 @@ def genre_switch_penalty(order: List[int], tracks: List[Track]) -> float:
     return switches / max(1, total)
 
 
+def bpm_band_index(tempo: Optional[float], bands: List[float]) -> int:
+    if tempo is None:
+        return -1
+    index = 0
+    for band in bands:
+        if tempo >= band:
+            index += 1
+        else:
+            break
+    return index
+
+
+def bpm_guardrail_penalty(order: List[int], tracks: List[Track], bands: List[float]) -> float:
+    if len(order) < 2 or not bands:
+        return 0.0
+
+    bands = sorted(float(b) for b in bands)
+    penalty = 0.0
+    checks = 0.0
+    for i in range(len(order) - 1):
+        left_tempo = (tracks[order[i]].features or {}).get("tempo")
+        right_tempo = (tracks[order[i + 1]].features or {}).get("tempo")
+        left_band = bpm_band_index(left_tempo, bands)
+        right_band = bpm_band_index(right_tempo, bands)
+        if left_band < 0 or right_band < 0:
+            continue
+        checks += 1.0
+        jump = abs(left_band - right_band)
+        if jump > 1:
+            penalty += (jump - 1)
+
+    if checks <= 0:
+        return 0.0
+    return penalty / checks
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -836,6 +873,8 @@ def order_cost(
         cost += 0.08 * explicit_penalty(order, tracks, config.explicit_mode)
     if config.genre_cluster_strength > 0:
         cost += config.genre_cluster_strength * 0.12 * genre_switch_penalty(order, tracks)
+    if config.bpm_guardrails:
+        cost += 0.11 * bpm_guardrail_penalty(order, tracks, config.bpm_guardrails)
 
     return cost
 
@@ -1475,6 +1514,7 @@ def optimize_tracks(
     duration_tolerance_sec: int = 90,
     genre_cluster_strength: float = 0.0,
     mood_curve_points: Optional[List[Dict[str, float]]] = None,
+    bpm_guardrails: Optional[List[float]] = None,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1511,6 +1551,7 @@ def optimize_tracks(
         album_gap=max(0, album_gap),
         explicit_mode=explicit_mode,
         genre_cluster_strength=max(0.0, genre_cluster_strength),
+        bpm_guardrails=sorted([float(value) for value in (bpm_guardrails or []) if float(value) > 0]),
     )
 
     energy_targets: Optional[List[float]] = None

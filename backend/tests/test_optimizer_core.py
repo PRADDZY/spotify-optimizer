@@ -217,6 +217,19 @@ def test_custom_curve_interpolates_points():
     assert curve[2] > curve[1]
 
 
+def test_bpm_guardrails_penalize_large_band_jumps():
+    tracks = [
+        make_track("a-1", 0.2, 85.0),
+        make_track("b-1", 0.4, 145.0),
+        make_track("c-1", 0.6, 95.0),
+    ]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(bpm_guardrails=[90, 110, 130])
+    jumpy = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
+    smoother = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
+    assert smoother < jumpy
+
+
 def test_album_gap_penalty_prefers_spaced_albums():
     tracks = [
         make_track("artist1-album1-a", 0.2, 100.0),
