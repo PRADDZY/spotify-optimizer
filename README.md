@@ -114,6 +114,8 @@ Backend: `http://localhost:8000`
 - `/metrics` exposes Prometheus-compatible metrics.
 - A versioned transition model can be trained from explicit feedback labels via `POST /model/train` and inspected via `GET /model/status`.
 - Active model blending is controlled by `MODEL_BLEND_ALPHA`; artifacts are stored under `MODEL_DIR`.
+- `/model/*` endpoints are locked down and require an authenticated model-admin user; set `MODEL_ADMIN_USER_IDS` in production.
+- Model endpoints use dedicated rate limits (`RATE_LIMIT_MODEL_STATUS`, `RATE_LIMIT_MODEL_WRITE`) in addition to global limits.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
 - Spotify's developer terms prohibit training on Spotify content. The model here is trained only on explicit user feedback labels + transition diagnostics.
 
