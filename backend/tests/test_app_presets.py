@@ -83,6 +83,24 @@ def clear_feedback_data(prefix: str) -> None:
             FEEDBACK_STORE.pop(feedback_id, None)
 
 
+def test_background_services_start_and_stop_scheduler_thread(monkeypatch):
+    def fake_scheduler_loop():
+        while not app_module.SCHEDULER_STOP.is_set():
+            app_module.SCHEDULER_STOP.wait(0.01)
+
+    monkeypatch.setattr(app_module, "scheduler_loop", fake_scheduler_loop)
+    app_module.stop_background_services(timeout_seconds=0.2)
+    app_module.start_background_services()
+
+    thread = getattr(app.state, "scheduler_thread", None)
+    assert thread is not None
+    assert thread.is_alive()
+
+    app_module.stop_background_services(timeout_seconds=0.5)
+    assert getattr(app.state, "scheduler_thread", None) is None
+    assert app_module.SCHEDULER_STOP.is_set()
+
+
 def test_apply_builtin_preset_populates_profile_defaults():
     payload = OptimizeRequest(playlist="abc123", preset_id="warmup")
     resolved = apply_builtin_preset(payload)

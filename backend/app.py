@@ -6,6 +6,7 @@ import secrets
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -347,7 +348,16 @@ TRAINING_JOB_STORE = DurableDict(STATE_STORE, "training_job_store")
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
 
-app = FastAPI(title="Spotify Mix Optimizer")
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    start_background_services()
+    try:
+        yield
+    finally:
+        stop_background_services()
+
+
+app = FastAPI(title="Spotify Mix Optimizer", lifespan=app_lifespan)
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
@@ -2506,20 +2516,24 @@ def scheduler_loop() -> None:
         SCHEDULER_STOP.wait(20)
 
 
-@app.on_event("startup")
-def start_scheduler() -> None:
+def start_background_services() -> None:
     cleanup_state_retention()
     refresh_active_model_cache()
-    if getattr(app.state, "scheduler_thread", None):
+    SCHEDULER_STOP.clear()
+    existing = getattr(app.state, "scheduler_thread", None)
+    if existing and existing.is_alive():
         return
     thread = threading.Thread(target=scheduler_loop, daemon=True, name="spotify-optimizer-scheduler")
     app.state.scheduler_thread = thread
     thread.start()
 
 
-@app.on_event("shutdown")
-def stop_scheduler() -> None:
+def stop_background_services(timeout_seconds: float = 5.0) -> None:
     SCHEDULER_STOP.set()
+    thread = getattr(app.state, "scheduler_thread", None)
+    if thread and thread.is_alive():
+        thread.join(timeout=max(0.1, timeout_seconds))
+    app.state.scheduler_thread = None
 
 
 @app.post("/schedules")
