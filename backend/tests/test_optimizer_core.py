@@ -326,3 +326,43 @@ def test_resolve_weights_supports_extended_objective_channels():
     )
     assert set(["bpm", "key", "loudness", "acousticness", "time_signature"]).issubset(weights.keys())
     assert abs(sum(weights.values()) - 1.0) < 1e-6
+
+
+def test_max_bpm_jump_constraint_penalizes_large_adjacent_tempo_gaps():
+    tracks = [
+        make_track("a-1", 0.3, 100.0),
+        make_track("b-1", 0.5, 170.0),
+        make_track("c-1", 0.4, 108.0),
+    ]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(max_bpm_jump=15.0)
+    bad = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
+    good = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
+    assert good < bad
+
+
+def test_min_key_compatibility_constraint_penalizes_harmonic_mismatch():
+    tracks = [
+        make_track("a-1", 0.3, 100.0, key=0, mode=1),
+        make_track("b-1", 0.5, 102.0, key=6, mode=1),
+        make_track("c-1", 0.4, 105.0, key=0, mode=1),
+    ]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(min_key_compatibility=0.7)
+    bad = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
+    better = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
+    assert better < bad
+
+
+def test_no_repeat_artist_within_constraint_rewards_spacing():
+    tracks = [
+        make_track("artist1-a", 0.2, 100.0),
+        make_track("artist1-b", 0.4, 110.0),
+        make_track("artist2-c", 0.6, 120.0),
+        make_track("artist3-d", 0.5, 125.0),
+    ]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(no_repeat_artist_within=2)
+    crowded = order_cost([0, 1, 2, 3], dist, tracks, None, None, None, config)
+    spaced = order_cost([0, 2, 1, 3], dist, tracks, None, None, None, config)
+    assert spaced < crowded
