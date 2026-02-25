@@ -286,6 +286,20 @@ button:hover:not(:disabled) {
   gap: 8px;
 }
 
+.weight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.weight-row label {
+  display: block;
+}
+
+.weight-row .range-value {
+  margin-top: 4px;
+}
+
 .list-item {
   padding: 10px 12px;
   border-radius: 12px;
@@ -326,6 +340,10 @@ button:hover:not(:disabled) {
   }
 
   .advanced-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .weight-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -58,11 +58,17 @@ SECURITY_HEADERS_ENABLED = os.getenv("SECURITY_HEADERS_ENABLED", "true").lower()
 
 
 class WeightConfig(BaseModel):
-    bpm: float = 0.32
-    key: float = 0.28
-    energy: float = 0.12
-    valence: float = 0.06
-    dance: float = 0.06
+    bpm: float = Field(0.32, ge=0.0, le=2.0)
+    key: float = Field(0.28, ge=0.0, le=2.0)
+    energy: float = Field(0.12, ge=0.0, le=2.0)
+    valence: float = Field(0.06, ge=0.0, le=2.0)
+    dance: float = Field(0.06, ge=0.0, le=2.0)
+    loudness: float = Field(0.06, ge=0.0, le=2.0)
+    acousticness: float = Field(0.03, ge=0.0, le=2.0)
+    instrumentalness: float = Field(0.02, ge=0.0, le=2.0)
+    speechiness: float = Field(0.02, ge=0.0, le=2.0)
+    liveness: float = Field(0.01, ge=0.0, le=2.0)
+    time_signature: float = Field(0.02, ge=0.0, le=2.0)
 
 
 class MoodPoint(BaseModel):
