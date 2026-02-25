@@ -1,4 +1,6 @@
 import os
+import time
+import uuid
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -8,15 +10,34 @@ os.environ.setdefault("SPOTIFY_CLIENT_ID", "test-client")
 os.environ.setdefault("SPOTIFY_CLIENT_SECRET", "test-secret")
 os.environ.setdefault("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
 
+import backend.app as app_module
 from backend.app import (
     BUILTIN_PRESETS,
     app,
+    SESSION_COOKIE,
+    STORE,
     OptimizeRequest,
     apply_builtin_preset,
     edge_score_diff,
     transition_summary,
     validate_optimize_payload,
 )
+
+
+def make_authenticated_client(user_id: str = "tester") -> TestClient:
+    client = TestClient(app)
+    sid = f"sid-{uuid.uuid4().hex}"
+    STORE.set_session(
+        sid,
+        {
+            "access_token": "token",
+            "refresh_token": "refresh",
+            "expires_at": time.time() + 3600,
+            "user_id": user_id,
+        },
+    )
+    client.cookies.set(SESSION_COOKIE, sid)
+    return client
 
 
 def test_apply_builtin_preset_populates_profile_defaults():
@@ -87,8 +108,23 @@ def test_validate_optimize_payload_rejects_invalid_anneal_temps():
         validate_optimize_payload(payload)
 
 
-def test_model_status_endpoint_returns_expected_shape():
+def test_model_status_endpoint_requires_authentication(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
     client = TestClient(app)
+    response = client.get("/model/status")
+    assert response.status_code == 401
+
+
+def test_model_status_endpoint_requires_admin_role(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    client = make_authenticated_client("normal-user")
+    response = client.get("/model/status")
+    assert response.status_code == 403
+
+
+def test_model_status_endpoint_returns_expected_shape_for_admin(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    client = make_authenticated_client("admin-user")
     response = client.get("/model/status")
     assert response.status_code == 200
     payload = response.json()
@@ -96,9 +132,17 @@ def test_model_status_endpoint_returns_expected_shape():
     assert "available_versions" in payload
 
 
-def test_model_train_endpoint_returns_graceful_response_when_data_is_small():
-    client = TestClient(app)
+def test_model_train_endpoint_returns_graceful_response_when_data_is_small(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    client = make_authenticated_client("admin-user")
     response = client.post("/model/train", json={"owner_scope": "all", "activate": True, "min_samples": 5000})
     assert response.status_code == 200
     payload = response.json()
     assert payload["trained"] is False
+
+
+def test_model_train_endpoint_rejects_non_admin(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    client = make_authenticated_client("normal-user")
+    response = client.post("/model/train", json={"owner_scope": "all", "activate": True, "min_samples": 5000})
+    assert response.status_code == 403

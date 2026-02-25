@@ -54,6 +54,8 @@ LOG_FORMAT = os.getenv("LOG_FORMAT", "json").lower()
 RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "10/minute")
 RATE_LIMIT_OPTIMIZE = os.getenv("RATE_LIMIT_OPTIMIZE", "5/minute")
 RATE_LIMIT_GLOBAL = os.getenv("RATE_LIMIT_GLOBAL", "60/minute")
+RATE_LIMIT_MODEL_STATUS = os.getenv("RATE_LIMIT_MODEL_STATUS", "20/minute")
+RATE_LIMIT_MODEL_WRITE = os.getenv("RATE_LIMIT_MODEL_WRITE", "3/minute")
 TRANSITION_LOG_PATH = os.getenv("TRANSITION_LOG_PATH")
 STATE_RETENTION_DAYS = int(os.getenv("STATE_RETENTION_DAYS", "30"))
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1048576"))
@@ -62,6 +64,11 @@ MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(os.path.dirname(__file__), "mode
 MODEL_BLEND_ALPHA = float(os.getenv("MODEL_BLEND_ALPHA", "0.2"))
 MODEL_MIN_SAMPLES = int(os.getenv("MODEL_MIN_SAMPLES", "20"))
 MODEL_RETRAIN_INTERVAL_MINUTES = int(os.getenv("MODEL_RETRAIN_INTERVAL_MINUTES", "240"))
+MODEL_ADMIN_USER_IDS = {
+    value.strip()
+    for value in os.getenv("MODEL_ADMIN_USER_IDS", "").split(",")
+    if value.strip()
+}
 
 
 class WeightConfig(BaseModel):
@@ -1384,8 +1391,30 @@ def manual_feedback(request: Request, payload: ManualFeedbackRequest):
     }
 
 
+def require_authenticated_owner_id(request: Request) -> str:
+    sid = get_session_id(request)
+    if not sid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    session = STORE.get_session(sid)
+    if not session or not session.get("user_id"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return str(session["user_id"])
+
+
+def require_model_admin(request: Request) -> str:
+    owner_id = require_authenticated_owner_id(request)
+    if owner_id in MODEL_ADMIN_USER_IDS:
+        return owner_id
+    if ENV != "production" and not MODEL_ADMIN_USER_IDS:
+        # Local/dev convenience: no configured admin list means any authenticated user can manage models.
+        return owner_id
+    raise HTTPException(status_code=403, detail="Model admin role required")
+
+
 @app.get("/model/status")
-def model_status():
+@limiter.limit(RATE_LIMIT_MODEL_STATUS)
+def model_status(request: Request):
+    _ = require_model_admin(request)
     refresh_active_model_cache()
     versions = [
         {"version": version, **record}
@@ -1403,16 +1432,20 @@ def model_status():
 
 
 @app.post("/model/train")
+@limiter.limit(RATE_LIMIT_MODEL_WRITE)
 def model_train(request: Request, payload: ModelTrainRequest):
+    _ = require_model_admin(request)
     if payload.owner_scope not in {"all", "me"}:
         raise HTTPException(status_code=400, detail="owner_scope must be all or me")
-    owner_id = current_owner_id(request) if payload.owner_scope == "me" else None
+    owner_id = require_authenticated_owner_id(request) if payload.owner_scope == "me" else None
     min_samples = payload.min_samples or MODEL_MIN_SAMPLES
     return train_transition_model(owner_id=owner_id, min_samples=min_samples, activate=payload.activate)
 
 
 @app.post("/model/activate/{version}")
-def model_activate(version: str):
+@limiter.limit(RATE_LIMIT_MODEL_WRITE)
+def model_activate(request: Request, version: str):
+    _ = require_model_admin(request)
     record = MODEL_REGISTRY.get(version)
     if not record:
         raise HTTPException(status_code=404, detail="model version not found")
