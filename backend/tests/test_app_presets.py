@@ -11,6 +11,7 @@ from backend.app import (
     BUILTIN_PRESETS,
     OptimizeRequest,
     apply_builtin_preset,
+    edge_score_diff,
     transition_summary,
 )
 
@@ -56,3 +57,17 @@ def test_transition_summary_counts_reason_codes_and_worst_edges():
     summary = transition_summary(transitions)
     assert summary["dominant_penalties"][0]["reason_code"] == "tempo_mismatch"
     assert summary["worst_edges"][0]["score"] == 0.9
+
+
+def test_edge_score_diff_reports_improvements_and_regressions():
+    baseline = [
+        {"score": 0.7, "from_track": "A", "to_track": "B", "reason_code": "tempo_mismatch"},
+        {"score": 0.3, "from_track": "B", "to_track": "C", "reason_code": "energy_shift"},
+    ]
+    candidate = [
+        {"score": 0.4, "from_track": "A", "to_track": "B", "reason_code": "tempo_mismatch"},
+        {"score": 0.5, "from_track": "B", "to_track": "C", "reason_code": "energy_shift"},
+    ]
+    payload = edge_score_diff(baseline, candidate, max_edges=3)
+    assert payload["most_improved"][0]["score_delta"] < 0
+    assert payload["most_regressed"][0]["score_delta"] > 0

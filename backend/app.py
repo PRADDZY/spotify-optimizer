@@ -128,6 +128,8 @@ class QuickFixRequest(BaseModel):
 class CompareRequest(BaseModel):
     baseline_run_id: str
     candidate_run_id: str
+    include_edge_diff: bool = True
+    max_edges: int = Field(10, ge=1, le=50)
 
 
 class PresetRequest(BaseModel):
@@ -965,6 +967,50 @@ def build_run_report(run_id: str, run: dict) -> dict:
     }
 
 
+def edge_score_diff(
+    baseline_transitions: list[dict],
+    candidate_transitions: list[dict],
+    max_edges: int,
+) -> dict:
+    size = min(len(baseline_transitions), len(candidate_transitions))
+    if size <= 0:
+        return {"edge_diffs": [], "most_improved": [], "most_regressed": []}
+
+    rows: list[dict] = []
+    for idx in range(size):
+        baseline_edge = baseline_transitions[idx]
+        candidate_edge = candidate_transitions[idx]
+        baseline_score = float(baseline_edge.get("score", 0.0))
+        candidate_score = float(candidate_edge.get("score", 0.0))
+        rows.append(
+            {
+                "index": idx,
+                "baseline_score": round(baseline_score, 6),
+                "candidate_score": round(candidate_score, 6),
+                "score_delta": round(candidate_score - baseline_score, 6),
+                "baseline_edge": {
+                    "from_track": baseline_edge.get("from_track"),
+                    "to_track": baseline_edge.get("to_track"),
+                    "reason_code": baseline_edge.get("reason_code"),
+                },
+                "candidate_edge": {
+                    "from_track": candidate_edge.get("from_track"),
+                    "to_track": candidate_edge.get("to_track"),
+                    "reason_code": candidate_edge.get("reason_code"),
+                },
+            }
+        )
+
+    rows.sort(key=lambda item: abs(float(item.get("score_delta", 0.0))), reverse=True)
+    improved = sorted(rows, key=lambda item: float(item.get("score_delta", 0.0)))[:max_edges]
+    regressed = sorted(rows, key=lambda item: float(item.get("score_delta", 0.0)), reverse=True)[:max_edges]
+    return {
+        "edge_diffs": rows[:max_edges],
+        "most_improved": improved,
+        "most_regressed": regressed,
+    }
+
+
 def build_simple_pdf(lines: list[str]) -> bytes:
     sanitized = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") for line in lines]
     text_ops = []
@@ -1023,12 +1069,20 @@ def compare_runs(payload: CompareRequest):
         ),
     }
     comparison_id = uuid.uuid4().hex
+    transitions = {}
+    if payload.include_edge_diff:
+        transitions = edge_score_diff(
+            baseline.get("transitions", []),
+            candidate.get("transitions", []),
+            max_edges=payload.max_edges,
+        )
     COMPARISON_HISTORY[comparison_id] = {
         "baseline_run_id": payload.baseline_run_id,
         "candidate_run_id": payload.candidate_run_id,
         "baseline_metrics": baseline_metrics,
         "candidate_metrics": candidate_metrics,
         "delta": delta,
+        **transitions,
         "created_at": time.time(),
     }
     return {"comparison_id": comparison_id, **COMPARISON_HISTORY[comparison_id]}
