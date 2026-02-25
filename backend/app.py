@@ -99,6 +99,11 @@ class OptimizeResponse(BaseModel):
     roughest: list
 
 
+class QuickFixRequest(BaseModel):
+    minimax_boost: int = Field(2, ge=1, le=10)
+    public: Optional[bool] = None
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -509,11 +514,11 @@ def optimize(request: Request, payload: OptimizeRequest):
     weights = payload.weights.model_dump() if payload.weights else {}
 
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
-    playlist_id = parse_playlist_id(payload.playlist)
+    source_playlist_id = parse_playlist_id(payload.playlist)
 
     playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
         sp=sp,
-        playlist_id=playlist_id,
+        playlist_id=source_playlist_id,
         cache_path=cache_path,
         weights=weights,
         bpm_window=payload.bpm_window,
@@ -558,11 +563,14 @@ def optimize(request: Request, payload: OptimizeRequest):
 
     run_id = uuid.uuid4().hex
     RUN_HISTORY[run_id] = {
+        "source_playlist_id": source_playlist_id,
         "playlist_id": playlist_id,
         "playlist_name": playlist_name,
         "transition_score": round(cost, 4),
         "roughest": roughest,
         "transitions": explainability,
+        "request": payload.model_dump(),
+        "public": payload.public,
         "created_at": time.time(),
     }
 
@@ -587,4 +595,93 @@ def run_transitions(run_id: str):
         "playlist_name": run.get("playlist_name"),
         "transition_score": run.get("transition_score"),
         "transitions": run.get("transitions", []),
+    }
+
+
+@app.post("/optimize/{run_id}/quick-fix", response_model=OptimizeResponse)
+def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
+    run = RUN_HISTORY.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    raw_request = run.get("request")
+    if not raw_request:
+        raise HTTPException(status_code=400, detail="run has no replayable request payload")
+
+    cfg = dict(raw_request)
+    cfg["minimax_passes"] = int(cfg.get("minimax_passes", 2)) + payload.minimax_boost
+    cfg["playlist"] = run.get("source_playlist_id")
+    if payload.public is not None:
+        cfg["public"] = payload.public
+    replay = OptimizeRequest(**cfg)
+
+    sp = spotify_for_session(request)
+    weights = replay.weights.model_dump() if replay.weights else {}
+    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
+    source_playlist_id = parse_playlist_id(replay.playlist)
+
+    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+        sp=sp,
+        playlist_id=source_playlist_id,
+        cache_path=cache_path,
+        weights=weights,
+        bpm_window=replay.bpm_window,
+        restarts=replay.restarts,
+        two_opt_passes=replay.two_opt_passes,
+        missing=replay.missing,
+        seed=43,
+        mix_mode=replay.mix_mode,
+        flow_curve=replay.flow_curve,
+        flow_profile=replay.flow_profile,
+        key_lock_window=replay.key_lock_window,
+        tempo_ramp_weight=replay.tempo_ramp_weight,
+        minimax_passes=replay.minimax_passes,
+        locked_first_track_id=replay.locked_first_track_id,
+        locked_last_track_id=replay.locked_last_track_id,
+        locked_blocks=replay.locked_blocks,
+        artist_gap=replay.artist_gap,
+        album_gap=replay.album_gap,
+        explicit_mode=replay.explicit_mode,
+        duration_target_sec=replay.duration_target_sec,
+        duration_tolerance_sec=replay.duration_tolerance_sec,
+        genre_cluster_strength=replay.genre_cluster_strength,
+        mood_curve_points=[point.model_dump() for point in replay.mood_curve_points or []],
+        bpm_guardrails=replay.bpm_guardrails or [],
+        harmonic_strict=replay.harmonic_strict,
+        transition_log_path=TRANSITION_LOG_PATH,
+    )
+
+    base_name = replay.name or playlist_name or "Playlist"
+    quick_name = optimized_name(f"{base_name}_quickfix")
+    ordered_ids = [track.id for track in ordered_tracks]
+    new_playlist_id = sp.user_playlist_create(
+        sp.current_user()["id"],
+        name=quick_name,
+        public=replay.public,
+        description=f"Quick-fix optimized from run {run_id}",
+    )["id"]
+    for i in range(0, len(ordered_ids), 100):
+        sp.playlist_add_items(new_playlist_id, ordered_ids[i : i + 100])
+
+    new_run_id = uuid.uuid4().hex
+    RUN_HISTORY[new_run_id] = {
+        "source_playlist_id": source_playlist_id,
+        "playlist_id": new_playlist_id,
+        "playlist_name": playlist_name,
+        "transition_score": round(cost, 4),
+        "roughest": roughest,
+        "transitions": explainability,
+        "request": replay.model_dump(),
+        "public": replay.public,
+        "parent_run_id": run_id,
+        "created_at": time.time(),
+    }
+
+    return {
+        "run_id": new_run_id,
+        "playlist_id": new_playlist_id,
+        "playlist_name": quick_name,
+        "playlist_url": f"https://open.spotify.com/playlist/{new_playlist_id}",
+        "transition_score": round(cost, 4),
+        "roughest": roughest,
     }
