@@ -17,6 +17,7 @@ from backend.optimizer_core import (
     build_distance_matrix_cached,
     build_distance_matrix_cache_key,
     build_custom_curve,
+    dedupe_candidate_orders,
     DIST_MATRIX_CACHE,
     DIST_MATRIX_CACHE_LOCK,
     recommend_crossfade_seconds,
@@ -530,3 +531,16 @@ def test_memoize_order_objective_avoids_duplicate_evaluations():
 
     assert first == second
     assert calls["count"] == 1
+
+
+def test_dedupe_candidate_orders_keeps_first_occurrence_order():
+    deduped = dedupe_candidate_orders(
+        [
+            [0, 1, 2, 3],
+            [0, 1, 2, 3],
+            [1, 0, 2, 3],
+            [1, 0, 2, 3],
+            [2, 3, 1, 0],
+        ]
+    )
+    assert deduped == [[0, 1, 2, 3], [1, 0, 2, 3], [2, 3, 1, 0]]

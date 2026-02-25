@@ -1669,6 +1669,19 @@ def anneal_refine(
 
     return best
 
+
+def dedupe_candidate_orders(candidate_orders: List[List[int]]) -> List[List[int]]:
+    seen: set[Tuple[int, ...]] = set()
+    unique: List[List[int]] = []
+    for order in candidate_orders:
+        key = tuple(order)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(order)
+    return unique
+
+
 def optimize_order(
     dist: List[List[float]],
     tracks: List[Track],
@@ -1722,7 +1735,7 @@ def optimize_order(
         if energy_seed:
             candidate_orders.append(energy_seed)
 
-    for order in candidate_orders:
+    for order in dedupe_candidate_orders(candidate_orders):
         working = list(order)
         if solver_mode == "hybrid":
             working = anneal_refine(
