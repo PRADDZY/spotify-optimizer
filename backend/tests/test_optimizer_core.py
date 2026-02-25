@@ -187,6 +187,23 @@ def test_duration_target_drops_long_tracks_to_fit_upper_bound():
     assert len(trimmed) == 2
 
 
+def test_genre_cluster_penalty_prefers_fewer_genre_switches():
+    a = make_track("artist1-a", 0.2, 100.0)
+    b = make_track("artist2-b", 0.4, 110.0)
+    c = make_track("artist3-c", 0.6, 120.0)
+    d = make_track("artist4-d", 0.8, 130.0)
+    a.genres = ["house"]
+    b.genres = ["house"]
+    c.genres = ["rock"]
+    d.genres = ["rock"]
+    tracks = [a, b, c, d]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(genre_cluster_strength=1.0)
+    clustered = order_cost([0, 1, 2, 3], dist, tracks, None, None, None, config)
+    alternating = order_cost([0, 2, 1, 3], dist, tracks, None, None, None, config)
+    assert clustered < alternating
+
+
 def test_album_gap_penalty_prefers_spaced_albums():
     tracks = [
         make_track("artist1-album1-a", 0.2, 100.0),

@@ -126,6 +126,7 @@ class OptimizationConfig:
     artist_gap: int = 0
     album_gap: int = 0
     explicit_mode: str = "allow"
+    genre_cluster_strength: float = 0.0
 
 
 def parse_playlist_id(value: str) -> str:
@@ -237,6 +238,27 @@ def enrich_audio_features(sp: spotipy.Spotify, tracks: List[Track], cache_path: 
 
     for track in tracks:
         track.features = cache.get(track.id)
+
+
+def enrich_artist_genres(sp: spotipy.Spotify, tracks: List[Track], cache_path: str) -> None:
+    cache = load_json(cache_path)
+    artist_ids = sorted({artist_id for track in tracks for artist_id in track.artist_ids if artist_id})
+    missing = [artist_id for artist_id in artist_ids if artist_id not in cache]
+
+    for batch in chunked(missing, 50):
+        artists_payload = sp.artists(batch).get("artists", [])
+        for artist in artists_payload:
+            if not artist:
+                continue
+            cache[artist.get("id")] = artist.get("genres", [])
+
+    save_json(cache_path, cache)
+
+    for track in tracks:
+        genres: List[str] = []
+        for artist_id in track.artist_ids:
+            genres.extend(cache.get(artist_id, []))
+        track.genres = sorted(set(genres))
 
 
 def track_has_essential_features(features: Optional[Dict]) -> bool:
@@ -406,6 +428,31 @@ def build_cluster_seed_order(tracks: List[Track], flow_profile: str) -> List[int
         ordered_segments = [low, mid, high]
 
     return [item[0] for segment in ordered_segments for item in segment]
+
+
+def build_genre_seed_order(tracks: List[Track]) -> List[int]:
+    if not tracks:
+        return []
+
+    buckets: Dict[str, List[Tuple[int, float, float]]] = {}
+    for idx, track in enumerate(tracks):
+        genre = (track.genres[0] if track.genres else "unknown").lower()
+        features = track.features or {}
+        energy = float(features.get("energy") or 0.5)
+        tempo = float(features.get("tempo") or 120.0)
+        buckets.setdefault(genre, []).append((idx, energy, tempo))
+
+    ordered_groups = sorted(
+        buckets.items(),
+        key=lambda item: sum(value[1] for value in item[1]) / max(1, len(item[1])),
+    )
+
+    order: List[int] = []
+    for _, values in ordered_groups:
+        values.sort(key=lambda item: item[2])
+        order.extend(index for index, _, _ in values)
+    return order
+
 
 def bpm_distance(t1: Optional[float], t2: Optional[float], window: float) -> float:
     if t1 is None or t2 is None or t1 <= 0 or t2 <= 0:
@@ -693,6 +740,20 @@ def explicit_penalty(order: List[int], tracks: List[Track], mode: str) -> float:
     return explicit_count / max(1, len(order))
 
 
+def genre_switch_penalty(order: List[int], tracks: List[Track]) -> float:
+    if len(order) < 2:
+        return 0.0
+    switches = 0
+    total = 0
+    for i in range(len(order) - 1):
+        left = tracks[order[i]].genres[0] if tracks[order[i]].genres else "unknown"
+        right = tracks[order[i + 1]].genres[0] if tracks[order[i + 1]].genres else "unknown"
+        total += 1
+        if left != right:
+            switches += 1
+    return switches / max(1, total)
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -734,6 +795,8 @@ def order_cost(
         )
     if config.explicit_mode == "prefer_clean":
         cost += 0.08 * explicit_penalty(order, tracks, config.explicit_mode)
+    if config.genre_cluster_strength > 0:
+        cost += config.genre_cluster_strength * 0.12 * genre_switch_penalty(order, tracks)
 
     return cost
 
@@ -1086,6 +1149,7 @@ def optimize_order(
     flow_profile: str,
     energy_targets: Optional[List[float]],
     minimax_passes: int,
+    genre_cluster_strength: float = 0.0,
 ) -> Tuple[List[int], float]:
     n = len(dist)
     if n == 0:
@@ -1106,6 +1170,11 @@ def optimize_order(
     cluster_seed = build_cluster_seed_order(tracks, flow_profile)
     if cluster_seed:
         candidate_orders.append(cluster_seed)
+
+    if genre_cluster_strength > 0:
+        genre_seed = build_genre_seed_order(tracks)
+        if genre_seed:
+            candidate_orders.append(genre_seed)
 
     if energy_targets:
         energy_seed = build_energy_order(tracks, energy_targets)
@@ -1365,6 +1434,7 @@ def optimize_tracks(
     explicit_mode: str = "allow",
     duration_target_sec: Optional[int] = None,
     duration_tolerance_sec: int = 90,
+    genre_cluster_strength: float = 0.0,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1372,6 +1442,7 @@ def optimize_tracks(
         raise RuntimeError("No playable tracks found in playlist.")
 
     enrich_audio_features(sp, tracks, cache_path)
+    enrich_artist_genres(sp, tracks, cache_path.replace("audio_features.json", "artist_genres.json"))
 
     filtered_tracks = apply_explicit_filter(tracks, explicit_mode)
     filtered_tracks = apply_duration_target(
@@ -1399,6 +1470,7 @@ def optimize_tracks(
         artist_gap=max(0, artist_gap),
         album_gap=max(0, album_gap),
         explicit_mode=explicit_mode,
+        genre_cluster_strength=max(0.0, genre_cluster_strength),
     )
 
     energy_targets: Optional[List[float]] = None
@@ -1445,6 +1517,7 @@ def optimize_tracks(
         flow_profile=flow_profile,
         energy_targets=energy_targets,
         minimax_passes=config.minimax_passes,
+        genre_cluster_strength=config.genre_cluster_strength,
     )
 
     order = apply_fixed_endpoints(
