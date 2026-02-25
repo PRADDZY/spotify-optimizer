@@ -109,6 +109,18 @@ class CompareRequest(BaseModel):
     candidate_run_id: str
 
 
+class PresetRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    config: dict
+    schema_version: int = 1
+
+
+class PresetPatchRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    config: Optional[dict] = None
+    schema_version: Optional[int] = None
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -128,6 +140,7 @@ def setup_logging() -> logging.Logger:
 LOGGER = setup_logging()
 RUN_HISTORY: dict[str, dict] = {}
 COMPARISON_HISTORY: dict[str, dict] = {}
+PRESET_STORE: dict[str, dict] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -655,6 +668,72 @@ def get_comparison(comparison_id: str):
     if not comparison:
         raise HTTPException(status_code=404, detail="comparison not found")
     return {"comparison_id": comparison_id, **comparison}
+
+
+def current_owner_id(request: Request) -> str:
+    sid = get_session_id(request)
+    if sid:
+        session = STORE.get_session(sid)
+        if session and session.get("user_id"):
+            return str(session["user_id"])
+    return "anonymous"
+
+
+@app.post("/presets")
+def create_preset(request: Request, payload: PresetRequest):
+    preset_id = uuid.uuid4().hex
+    owner_id = current_owner_id(request)
+    PRESET_STORE[preset_id] = {
+        "owner_id": owner_id,
+        "name": payload.name,
+        "config": payload.config,
+        "schema_version": payload.schema_version,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+    }
+    return {"preset_id": preset_id, **PRESET_STORE[preset_id]}
+
+
+@app.get("/presets")
+def list_presets(request: Request):
+    owner_id = current_owner_id(request)
+    rows = []
+    for preset_id, value in PRESET_STORE.items():
+        if value.get("owner_id") != owner_id:
+            continue
+        rows.append({"preset_id": preset_id, **value})
+    rows.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
+    return {"items": rows}
+
+
+@app.patch("/presets/{preset_id}")
+def patch_preset(request: Request, preset_id: str, payload: PresetPatchRequest):
+    preset = PRESET_STORE.get(preset_id)
+    if not preset:
+        raise HTTPException(status_code=404, detail="preset not found")
+    owner_id = current_owner_id(request)
+    if preset.get("owner_id") != owner_id:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if payload.name is not None:
+        preset["name"] = payload.name
+    if payload.config is not None:
+        preset["config"] = payload.config
+    if payload.schema_version is not None:
+        preset["schema_version"] = payload.schema_version
+    preset["updated_at"] = time.time()
+    return {"preset_id": preset_id, **preset}
+
+
+@app.delete("/presets/{preset_id}")
+def delete_preset(request: Request, preset_id: str):
+    preset = PRESET_STORE.get(preset_id)
+    if not preset:
+        raise HTTPException(status_code=404, detail="preset not found")
+    owner_id = current_owner_id(request)
+    if preset.get("owner_id") != owner_id:
+        raise HTTPException(status_code=403, detail="forbidden")
+    PRESET_STORE.pop(preset_id, None)
+    return {"deleted": True, "preset_id": preset_id}
 
 
 @app.post("/optimize/{run_id}/quick-fix", response_model=OptimizeResponse)
