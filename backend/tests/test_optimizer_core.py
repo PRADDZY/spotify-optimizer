@@ -28,6 +28,7 @@ from backend.optimizer_core import (
     build_energy_curve,
     lookahead_penalty,
     minimax_refine,
+    memoize_order_objective,
     order_cost,
     order_max_edge,
     resolve_weights,
@@ -512,3 +513,20 @@ def test_build_distance_matrix_cached_returns_cache_hit_on_second_call(monkeypat
     assert hit_second is True
     assert dist_first == dist_second
     assert dist_first is not dist_second
+
+
+def test_memoize_order_objective_avoids_duplicate_evaluations():
+    calls = {"count": 0}
+
+    def objective(order):
+        calls["count"] += 1
+        return float(sum(order))
+
+    cached = memoize_order_objective(objective, max_entries=512)
+    order = [0, 2, 1, 3]
+
+    first = cached(order)
+    second = cached(list(order))
+
+    assert first == second
+    assert calls["count"] == 1

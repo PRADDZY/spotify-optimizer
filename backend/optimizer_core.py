@@ -1459,6 +1459,26 @@ def is_better_lexicographic(
     return False
 
 
+def memoize_order_objective(
+    objective_fn: Callable[[List[int]], float],
+    max_entries: int = 20000,
+) -> Callable[[List[int]], float]:
+    cache: Dict[Tuple[int, ...], float] = {}
+
+    def wrapped(order: List[int]) -> float:
+        key = tuple(order)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        value = float(objective_fn(order))
+        if len(cache) >= max(256, max_entries):
+            cache.clear()
+        cache[key] = value
+        return value
+
+    return wrapped
+
+
 def minimax_refine(
     order: List[int],
     dist: List[List[float]],
@@ -1675,6 +1695,7 @@ def optimize_order(
     rng = random.Random(seed)
     best_order: Optional[List[int]] = None
     best_cost = math.inf
+    objective_eval = memoize_order_objective(objective_fn)
 
     starts = pick_start_indices(dist, tracks, rng, restarts)
 
@@ -1706,27 +1727,27 @@ def optimize_order(
         if solver_mode == "hybrid":
             working = anneal_refine(
                 working,
-                objective_fn=objective_fn,
+                objective_fn=objective_eval,
                 rng=rng,
                 steps=max(0, anneal_steps),
                 temp_start=max(1e-6, anneal_temp_start),
                 temp_end=max(1e-6, anneal_temp_end),
             )
 
-        working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_fn)
+        working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_eval)
 
         if minimax_passes > 0:
-            working = minimax_refine(working, dist, objective_fn=objective_fn, passes=minimax_passes)
-            working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_fn)
+            working = minimax_refine(working, dist, objective_fn=objective_eval, passes=minimax_passes)
+            working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_eval)
 
-        cost = objective_fn(working)
+        cost = objective_eval(working)
         if cost < best_cost:
             best_cost = cost
             best_order = list(working)
 
     if best_order is None:
         best_order = list(range(n))
-        best_cost = objective_fn(best_order)
+        best_cost = objective_eval(best_order)
 
     return best_order, best_cost
 
