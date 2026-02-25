@@ -312,6 +312,10 @@ def setup_logging() -> logging.Logger:
 
 
 LOGGER = setup_logging()
+if ENV == "production" and not MODEL_ADMIN_USER_IDS:
+    LOGGER.error("model_admin_users_not_configured")
+if ENV != "production" and not MODEL_ADMIN_USER_IDS:
+    LOGGER.warning("model_admin_fallback_enabled", extra={"env": ENV})
 STATE_DB_PATH = os.getenv(
     "STATE_DB_PATH",
     os.path.join(os.path.dirname(__file__), "data", "state.db"),
