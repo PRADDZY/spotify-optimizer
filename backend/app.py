@@ -2,8 +2,10 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -141,6 +143,18 @@ class BatchRequest(BaseModel):
     options: Optional[dict] = None
 
 
+class ScheduleRequest(BaseModel):
+    cron: str
+    batch: BatchRequest
+    enabled: bool = True
+
+
+class SchedulePatchRequest(BaseModel):
+    cron: Optional[str] = None
+    enabled: Optional[bool] = None
+    batch: Optional[BatchRequest] = None
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -163,6 +177,8 @@ COMPARISON_HISTORY: dict[str, dict] = {}
 PRESET_STORE: dict[str, dict] = {}
 SNAPSHOT_STORE: dict[str, dict] = {}
 BATCH_STORE: dict[str, dict] = {}
+SCHEDULE_STORE: dict[str, dict] = {}
+SCHEDULER_STOP = threading.Event()
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -751,6 +767,142 @@ def create_playlist_with_items(
     return playlist_id
 
 
+def cron_field_matches(value: int, field: str) -> bool:
+    if field == "*":
+        return True
+    if field.startswith("*/"):
+        step = int(field[2:])
+        return step > 0 and value % step == 0
+    if "," in field:
+        return any(cron_field_matches(value, part.strip()) for part in field.split(","))
+    if "-" in field:
+        left, right = field.split("-", 1)
+        return int(left) <= value <= int(right)
+    return value == int(field)
+
+
+def cron_matches_now(cron_expr: str, now: datetime) -> bool:
+    parts = cron_expr.strip().split()
+    if len(parts) != 5:
+        return False
+    minute, hour, day, month, weekday = parts
+    return (
+        cron_field_matches(now.minute, minute)
+        and cron_field_matches(now.hour, hour)
+        and cron_field_matches(now.day, day)
+        and cron_field_matches(now.month, month)
+        and cron_field_matches((now.weekday() + 1) % 7, weekday)
+    )
+
+
+def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchRequest, batch_source: str) -> tuple[str, dict]:
+    batch_id = uuid.uuid4().hex
+    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
+    options = payload.options or {}
+    items = []
+
+    for index, playlist in enumerate(payload.playlists):
+        try:
+            cfg = dict(options)
+            cfg.pop("playlist", None)
+            cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
+            weights = cfg_payload.weights.model_dump() if cfg_payload.weights else {}
+            source_playlist_id = parse_playlist_id(cfg_payload.playlist)
+
+            playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+                sp=sp,
+                playlist_id=source_playlist_id,
+                cache_path=cache_path,
+                weights=weights,
+                bpm_window=cfg_payload.bpm_window,
+                restarts=cfg_payload.restarts,
+                two_opt_passes=cfg_payload.two_opt_passes,
+                missing=cfg_payload.missing,
+                seed=44 + index,
+                mix_mode=cfg_payload.mix_mode,
+                flow_curve=cfg_payload.flow_curve,
+                flow_profile=cfg_payload.flow_profile,
+                key_lock_window=cfg_payload.key_lock_window,
+                tempo_ramp_weight=cfg_payload.tempo_ramp_weight,
+                minimax_passes=cfg_payload.minimax_passes,
+                locked_first_track_id=cfg_payload.locked_first_track_id,
+                locked_last_track_id=cfg_payload.locked_last_track_id,
+                locked_blocks=cfg_payload.locked_blocks,
+                artist_gap=cfg_payload.artist_gap,
+                album_gap=cfg_payload.album_gap,
+                explicit_mode=cfg_payload.explicit_mode,
+                duration_target_sec=cfg_payload.duration_target_sec,
+                duration_tolerance_sec=cfg_payload.duration_tolerance_sec,
+                genre_cluster_strength=cfg_payload.genre_cluster_strength,
+                mood_curve_points=[point.model_dump() for point in cfg_payload.mood_curve_points or []],
+                bpm_guardrails=cfg_payload.bpm_guardrails or [],
+                harmonic_strict=cfg_payload.harmonic_strict,
+                transition_log_path=TRANSITION_LOG_PATH,
+            )
+
+            base_name = cfg_payload.name or playlist_name or f"Batch {index+1}"
+            if payload.name_prefix:
+                base_name = f"{payload.name_prefix}_{index+1}_{base_name}"
+            new_name = optimized_name(base_name)
+            ordered_ids = [track.id for track in ordered_tracks]
+            output_playlist_id = create_playlist_with_items(
+                sp=sp,
+                name=new_name,
+                public=payload.public,
+                track_ids=ordered_ids,
+                description=f"{batch_source} optimized item {index+1}",
+            )
+
+            run_id = uuid.uuid4().hex
+            RUN_HISTORY[run_id] = {
+                "source_playlist_id": source_playlist_id,
+                "playlist_id": output_playlist_id,
+                "playlist_name": playlist_name,
+                "transition_score": round(cost, 4),
+                "roughest": roughest,
+                "transitions": explainability,
+                "request": cfg_payload.model_dump(),
+                "public": payload.public,
+                "batch_id": batch_id,
+                "created_at": time.time(),
+            }
+            items.append(
+                {
+                    "index": index,
+                    "status": "completed",
+                    "source_playlist_id": source_playlist_id,
+                    "run_id": run_id,
+                    "playlist_id": output_playlist_id,
+                    "playlist_name": new_name,
+                    "playlist_url": f"https://open.spotify.com/playlist/{output_playlist_id}",
+                    "transition_score": round(cost, 4),
+                }
+            )
+        except Exception as exc:
+            items.append(
+                {
+                    "index": index,
+                    "status": "failed",
+                    "source_playlist_id": parse_playlist_id(playlist),
+                    "error": str(exc),
+                }
+            )
+
+    batch_record = {
+        "owner_id": owner_id,
+        "status": "completed",
+        "source": batch_source,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "total": len(payload.playlists),
+        "completed": sum(1 for item in items if item.get("status") == "completed"),
+        "failed": sum(1 for item in items if item.get("status") == "failed"),
+        "items": items,
+    }
+    BATCH_STORE[batch_id] = batch_record
+    return batch_id, batch_record
+
+
 @app.post("/presets")
 def create_preset(request: Request, payload: PresetRequest):
     preset_id = uuid.uuid4().hex
@@ -868,112 +1020,10 @@ def rollback_snapshot(request: Request, snapshot_id: str, payload: RollbackReque
 def create_batch(request: Request, payload: BatchRequest):
     if not payload.playlists:
         raise HTTPException(status_code=400, detail="playlists list cannot be empty")
-
     owner_id = current_owner_id(request)
-    batch_id = uuid.uuid4().hex
     sp = spotify_for_session(request)
-    cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
-    options = payload.options or {}
-    items = []
-
-    for index, playlist in enumerate(payload.playlists):
-        try:
-            cfg = dict(options)
-            cfg.pop("playlist", None)
-            cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
-            weights = cfg_payload.weights.model_dump() if cfg_payload.weights else {}
-            source_playlist_id = parse_playlist_id(cfg_payload.playlist)
-
-            playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
-                sp=sp,
-                playlist_id=source_playlist_id,
-                cache_path=cache_path,
-                weights=weights,
-                bpm_window=cfg_payload.bpm_window,
-                restarts=cfg_payload.restarts,
-                two_opt_passes=cfg_payload.two_opt_passes,
-                missing=cfg_payload.missing,
-                seed=44 + index,
-                mix_mode=cfg_payload.mix_mode,
-                flow_curve=cfg_payload.flow_curve,
-                flow_profile=cfg_payload.flow_profile,
-                key_lock_window=cfg_payload.key_lock_window,
-                tempo_ramp_weight=cfg_payload.tempo_ramp_weight,
-                minimax_passes=cfg_payload.minimax_passes,
-                locked_first_track_id=cfg_payload.locked_first_track_id,
-                locked_last_track_id=cfg_payload.locked_last_track_id,
-                locked_blocks=cfg_payload.locked_blocks,
-                artist_gap=cfg_payload.artist_gap,
-                album_gap=cfg_payload.album_gap,
-                explicit_mode=cfg_payload.explicit_mode,
-                duration_target_sec=cfg_payload.duration_target_sec,
-                duration_tolerance_sec=cfg_payload.duration_tolerance_sec,
-                genre_cluster_strength=cfg_payload.genre_cluster_strength,
-                mood_curve_points=[point.model_dump() for point in cfg_payload.mood_curve_points or []],
-                bpm_guardrails=cfg_payload.bpm_guardrails or [],
-                harmonic_strict=cfg_payload.harmonic_strict,
-                transition_log_path=TRANSITION_LOG_PATH,
-            )
-
-            base_name = cfg_payload.name or playlist_name or f"Batch {index+1}"
-            if payload.name_prefix:
-                base_name = f"{payload.name_prefix}_{index+1}_{base_name}"
-            new_name = optimized_name(base_name)
-            ordered_ids = [track.id for track in ordered_tracks]
-            output_playlist_id = create_playlist_with_items(
-                sp=sp,
-                name=new_name,
-                public=payload.public,
-                track_ids=ordered_ids,
-                description=f"Batch optimized item {index+1}",
-            )
-
-            run_id = uuid.uuid4().hex
-            RUN_HISTORY[run_id] = {
-                "source_playlist_id": source_playlist_id,
-                "playlist_id": output_playlist_id,
-                "playlist_name": playlist_name,
-                "transition_score": round(cost, 4),
-                "roughest": roughest,
-                "transitions": explainability,
-                "request": cfg_payload.model_dump(),
-                "public": payload.public,
-                "batch_id": batch_id,
-                "created_at": time.time(),
-            }
-            items.append(
-                {
-                    "index": index,
-                    "status": "completed",
-                    "source_playlist_id": source_playlist_id,
-                    "run_id": run_id,
-                    "playlist_id": output_playlist_id,
-                    "playlist_name": new_name,
-                    "playlist_url": f"https://open.spotify.com/playlist/{output_playlist_id}",
-                    "transition_score": round(cost, 4),
-                }
-            )
-        except Exception as exc:
-            items.append(
-                {
-                    "index": index,
-                    "status": "failed",
-                    "source_playlist_id": parse_playlist_id(playlist),
-                    "error": str(exc),
-                }
-            )
-
-    BATCH_STORE[batch_id] = {
-        "owner_id": owner_id,
-        "status": "completed",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "total": len(payload.playlists),
-        "completed": sum(1 for item in items if item.get("status") == "completed"),
-        "failed": sum(1 for item in items if item.get("status") == "failed"),
-        "items": items,
-    }
-    return {"batch_id": batch_id, **BATCH_STORE[batch_id]}
+    batch_id, record = run_batch_optimization(sp, owner_id, payload, batch_source="manual")
+    return {"batch_id": batch_id, **record}
 
 
 @app.get("/batch/{batch_id}")
@@ -996,6 +1046,147 @@ def get_batch_items(request: Request, batch_id: str):
     if batch.get("owner_id") != current_owner_id(request):
         raise HTTPException(status_code=403, detail="forbidden")
     return {"batch_id": batch_id, "items": batch.get("items", [])}
+
+
+def spotify_for_sid(sid: str) -> Optional[spotipy.Spotify]:
+    token_info = STORE.get_session(sid)
+    if not token_info:
+        return None
+    oauth = build_oauth()
+    if oauth.is_token_expired(token_info):
+        if "refresh_token" not in token_info:
+            return None
+        refreshed = oauth.refresh_access_token(token_info["refresh_token"])
+        if token_info.get("user_id"):
+            refreshed["user_id"] = token_info.get("user_id")
+        STORE.set_session(sid, refreshed)
+        token_info = refreshed
+    return spotipy.Spotify(auth=token_info["access_token"], requests_timeout=10)
+
+
+def run_scheduled_job(schedule_id: str) -> None:
+    schedule = SCHEDULE_STORE.get(schedule_id)
+    if not schedule or not schedule.get("enabled"):
+        return
+    sid = schedule.get("session_id")
+    if not sid:
+        schedule["last_error"] = "missing session id"
+        schedule["updated_at"] = time.time()
+        return
+    sp = spotify_for_sid(sid)
+    if not sp:
+        schedule["last_error"] = "session expired or missing"
+        schedule["updated_at"] = time.time()
+        return
+    batch_payload = BatchRequest(**schedule["batch"])
+    batch_id, _ = run_batch_optimization(sp, schedule["owner_id"], batch_payload, batch_source="scheduled")
+    schedule["last_batch_id"] = batch_id
+    schedule["last_run_at"] = datetime.now(timezone.utc).isoformat()
+    schedule["last_error"] = None
+    schedule["updated_at"] = time.time()
+
+
+def scheduler_loop() -> None:
+    while not SCHEDULER_STOP.is_set():
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        current_tick = now.isoformat()
+        for schedule_id, schedule in list(SCHEDULE_STORE.items()):
+            if not schedule.get("enabled"):
+                continue
+            if schedule.get("last_tick") == current_tick:
+                continue
+            schedule["last_tick"] = current_tick
+            try:
+                if cron_matches_now(schedule.get("cron", "* * * * *"), now):
+                    run_scheduled_job(schedule_id)
+            except Exception as exc:
+                schedule["last_error"] = str(exc)
+                schedule["updated_at"] = time.time()
+        SCHEDULER_STOP.wait(20)
+
+
+@app.on_event("startup")
+def start_scheduler() -> None:
+    if getattr(app.state, "scheduler_thread", None):
+        return
+    thread = threading.Thread(target=scheduler_loop, daemon=True, name="spotify-optimizer-scheduler")
+    app.state.scheduler_thread = thread
+    thread.start()
+
+
+@app.on_event("shutdown")
+def stop_scheduler() -> None:
+    SCHEDULER_STOP.set()
+
+
+@app.post("/schedules")
+def create_schedule(request: Request, payload: ScheduleRequest):
+    sid = get_session_id(request)
+    if not sid:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    try:
+        cron_matches_now(payload.cron, datetime.now(timezone.utc))
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid cron expression")
+
+    schedule_id = uuid.uuid4().hex
+    SCHEDULE_STORE[schedule_id] = {
+        "owner_id": current_owner_id(request),
+        "session_id": sid,
+        "cron": payload.cron,
+        "enabled": payload.enabled,
+        "batch": payload.batch.model_dump(),
+        "last_run_at": None,
+        "last_batch_id": None,
+        "last_error": None,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+    }
+    return {"schedule_id": schedule_id, **SCHEDULE_STORE[schedule_id]}
+
+
+@app.get("/schedules")
+def list_schedules(request: Request):
+    owner_id = current_owner_id(request)
+    rows = []
+    for schedule_id, value in SCHEDULE_STORE.items():
+        if value.get("owner_id") != owner_id:
+            continue
+        rows.append({"schedule_id": schedule_id, **value})
+    rows.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
+    return {"items": rows}
+
+
+@app.patch("/schedules/{schedule_id}")
+def patch_schedule(request: Request, schedule_id: str, payload: SchedulePatchRequest):
+    schedule = SCHEDULE_STORE.get(schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="schedule not found")
+    if schedule.get("owner_id") != current_owner_id(request):
+        raise HTTPException(status_code=403, detail="forbidden")
+    if payload.cron is not None:
+        try:
+            cron_matches_now(payload.cron, datetime.now(timezone.utc))
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid cron expression")
+        schedule["cron"] = payload.cron
+    if payload.enabled is not None:
+        schedule["enabled"] = payload.enabled
+    if payload.batch is not None:
+        schedule["batch"] = payload.batch.model_dump()
+    schedule["updated_at"] = time.time()
+    return {"schedule_id": schedule_id, **schedule}
+
+
+@app.delete("/schedules/{schedule_id}")
+def delete_schedule(request: Request, schedule_id: str):
+    schedule = SCHEDULE_STORE.get(schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="schedule not found")
+    if schedule.get("owner_id") != current_owner_id(request):
+        raise HTTPException(status_code=403, detail="forbidden")
+    SCHEDULE_STORE.pop(schedule_id, None)
+    return {"deleted": True, "schedule_id": schedule_id}
 
 
 @app.post("/optimize/{run_id}/quick-fix", response_model=OptimizeResponse)
