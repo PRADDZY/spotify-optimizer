@@ -4,9 +4,10 @@ Last validated: 2026-02-26
 
 ## Validation Runs
 
-- `python -m pytest backend/tests -q` -> `71 passed`
+- `python -m pytest backend/tests -q` -> `72 passed`
 - `npm --prefix frontend run lint` -> clean
 - `npm --prefix frontend run build` -> clean
+- `pytest.ini` now pins `asyncio_default_fixture_loop_scope=function` to remove test runtime deprecation drift.
 
 ## Current Status
 
