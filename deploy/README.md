@@ -76,6 +76,20 @@ Restore from a backup file:
 sudo bash deploy/monitoring/redis_restore.sh /path/to/backup.rdb
 ```
 
+## State DB Backup/Restore
+
+Create SQLite state backup:
+
+```bash
+sudo bash deploy/monitoring/state_db_backup.sh
+```
+
+Restore from backup:
+
+```bash
+sudo bash deploy/monitoring/state_db_restore.sh /path/to/state-YYYYMMDDTHHMMSSZ.db.gz
+```
+
 ## Hardening (Fail2ban + UFW)
 
 ```bash
@@ -101,5 +115,7 @@ sudo ufw enable
 - `deploy/monitoring/redis_maintenance.sh`
 - `deploy/monitoring/redis_backup.sh`
 - `deploy/monitoring/redis_restore.sh`
+- `deploy/monitoring/state_db_backup.sh`
+- `deploy/monitoring/state_db_restore.sh`
 - `deploy/monitoring/grafana-provisioning/datasources/prometheus.yml`
 - `deploy/monitoring/grafana-provisioning/dashboards/dashboards.yml`
