@@ -891,6 +891,30 @@ def report_pdf(request: Request, run_id: str):
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
+@app.get("/reports/{run_id}/manifest")
+def report_manifest(request: Request, run_id: str):
+    record = REPORT_STORE.get(run_id)
+    if not record:
+        run = RUN_HISTORY.get(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="run not found")
+        report = build_run_report(run_id, run)
+        record = {
+            "owner_id": current_owner_id(request),
+            "created_at": time.time(),
+            "report": report,
+            "pdf_bytes": None,
+        }
+        REPORT_STORE[run_id] = record
+    return {
+        "run_id": run_id,
+        "created_at": record.get("created_at"),
+        "has_json": bool(record.get("report")),
+        "has_pdf": record.get("pdf_bytes") is not None,
+        "pdf_bytes": record.get("pdf_bytes"),
+    }
+
+
 @app.post("/feedback/manual")
 def manual_feedback(request: Request, payload: ManualFeedbackRequest):
     run = RUN_HISTORY.get(payload.run_id)
