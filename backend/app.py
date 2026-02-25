@@ -56,6 +56,11 @@ class WeightConfig(BaseModel):
     dance: float = 0.06
 
 
+class MoodPoint(BaseModel):
+    position: float = Field(..., ge=0.0, le=1.0)
+    energy: float = Field(..., ge=0.0, le=1.0)
+
+
 class OptimizeRequest(BaseModel):
     playlist: str
     name: Optional[str] = None
@@ -75,6 +80,7 @@ class OptimizeRequest(BaseModel):
     duration_target_sec: Optional[int] = Field(None, ge=60, le=43200)
     duration_tolerance_sec: int = Field(90, ge=0, le=1800)
     genre_cluster_strength: float = Field(0.0, ge=0.0, le=1.0)
+    mood_curve_points: Optional[list[MoodPoint]] = None
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -526,6 +532,7 @@ def optimize(request: Request, payload: OptimizeRequest):
         duration_target_sec=payload.duration_target_sec,
         duration_tolerance_sec=payload.duration_tolerance_sec,
         genre_cluster_strength=payload.genre_cluster_strength,
+        mood_curve_points=[point.model_dump() for point in payload.mood_curve_points or []],
         transition_log_path=TRANSITION_LOG_PATH,
     )
 

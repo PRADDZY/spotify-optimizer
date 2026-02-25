@@ -374,6 +374,45 @@ def build_energy_curve(energies: List[float], n: int, profile: str = "peak") -> 
     return targets
 
 
+def build_custom_curve(points: List[Dict[str, float]], n: int, fallback: List[float]) -> List[float]:
+    if n <= 0:
+        return []
+    if not points:
+        return fallback
+
+    normalized: List[Tuple[float, float]] = []
+    for point in points:
+        try:
+            x = clamp01(float(point.get("position", 0.0)))
+            y = clamp01(float(point.get("energy", point.get("value", 0.5))))
+            normalized.append((x, y))
+        except Exception:
+            continue
+
+    if len(normalized) < 2:
+        return fallback
+
+    normalized.sort(key=lambda item: item[0])
+    curve: List[float] = []
+    for i in range(n):
+        pos = 0.0 if n == 1 else i / (n - 1)
+        left = normalized[0]
+        right = normalized[-1]
+        for j in range(len(normalized) - 1):
+            a = normalized[j]
+            b = normalized[j + 1]
+            if a[0] <= pos <= b[0]:
+                left, right = a, b
+                break
+        if abs(right[0] - left[0]) < 1e-9:
+            value = left[1]
+        else:
+            t = (pos - left[0]) / (right[0] - left[0])
+            value = left[1] + (right[1] - left[1]) * t
+        curve.append(clamp01(value))
+    return curve
+
+
 def build_energy_order(tracks: List[Track], energy_targets: List[float]) -> List[int]:
     n = len(tracks)
     if n == 0:
@@ -1435,6 +1474,7 @@ def optimize_tracks(
     duration_target_sec: Optional[int] = None,
     duration_tolerance_sec: int = 90,
     genre_cluster_strength: float = 0.0,
+    mood_curve_points: Optional[List[Dict[str, float]]] = None,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1481,6 +1521,7 @@ def optimize_tracks(
             if t.features and t.features.get("energy") is not None
         ]
         energy_targets = build_energy_curve(energies, len(with_features), profile=flow_profile)
+        energy_targets = build_custom_curve(mood_curve_points or [], len(with_features), energy_targets)
 
     tempo_targets: Optional[List[float]] = None
     tempo_unit_values: Optional[List[float]] = None
@@ -1491,6 +1532,7 @@ def optimize_tracks(
             if t.features and t.features.get("tempo") is not None
         ]
         tempo_targets = build_tempo_curve(tempos, len(with_features), profile=flow_profile)
+        tempo_targets = build_custom_curve(mood_curve_points or [], len(with_features), tempo_targets)
         bounds = robust_bounds(tempos)
         tempo_unit_values = [
             to_unit((t.features or {}).get("tempo"), bounds, default=0.5)

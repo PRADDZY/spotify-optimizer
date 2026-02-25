@@ -8,6 +8,7 @@ from backend.optimizer_core import (
     apply_explicit_filter,
     apply_duration_target,
     append_transition_log,
+    build_custom_curve,
     build_energy_curve,
     minimax_refine,
     order_cost,
@@ -202,6 +203,18 @@ def test_genre_cluster_penalty_prefers_fewer_genre_switches():
     clustered = order_cost([0, 1, 2, 3], dist, tracks, None, None, None, config)
     alternating = order_cost([0, 2, 1, 3], dist, tracks, None, None, None, config)
     assert clustered < alternating
+
+
+def test_custom_curve_interpolates_points():
+    fallback = [0.1, 0.2, 0.3, 0.4, 0.5]
+    curve = build_custom_curve(
+        [{"position": 0.0, "energy": 0.2}, {"position": 1.0, "energy": 0.8}],
+        5,
+        fallback,
+    )
+    assert curve[0] == 0.2
+    assert curve[-1] == 0.8
+    assert curve[2] > curve[1]
 
 
 def test_album_gap_penalty_prefers_spaced_albums():
