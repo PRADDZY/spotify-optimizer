@@ -226,6 +226,17 @@ def test_model_evaluation_endpoint_returns_version_breakdown(monkeypatch):
         "owner_id": "tester",
         "created_at": time.time(),
     }
+    run_id_unknown_time = f"{prefix}-run-unknown-time"
+    RUN_HISTORY[run_id_unknown_time] = {
+        "model_version": active_version,
+        "transitions": [{"reason_code": "tempo_mismatch"}],
+    }
+    FEEDBACK_STORE[f"{prefix}-fb-unknown-time"] = {
+        "run_id": run_id_unknown_time,
+        "edge_index": 0,
+        "rating": -1,
+        "owner_id": "tester",
+    }
 
     run_id_heuristic = f"{prefix}-run-heuristic"
     RUN_HISTORY[run_id_heuristic] = {

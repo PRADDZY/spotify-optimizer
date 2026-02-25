@@ -584,13 +584,15 @@ def build_model_feedback_evaluation(days: int) -> dict[str, object]:
         if rating == 0:
             continue
 
-        created_at = float(feedback.get("created_at", 0.0) or 0.0)
-        if created_at and created_at < cutoff:
-            continue
-
         run_id = feedback.get("run_id")
         run = runs.get(run_id)
         if not isinstance(run, dict):
+            continue
+
+        created_at = float(feedback.get("created_at", 0.0) or 0.0)
+        if created_at <= 0:
+            created_at = float(run.get("created_at", 0.0) or 0.0)
+        if created_at <= 0 or created_at < cutoff:
             continue
 
         transitions = run.get("transitions") or []
