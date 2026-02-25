@@ -1,4 +1,5 @@
 import json
+import backend.optimizer_core as core
 
 from backend.optimizer_core import (
     FeatureContext,
@@ -13,7 +14,11 @@ from backend.optimizer_core import (
     append_transition_log,
     beam_search_order,
     blend_distance_matrix_with_model,
+    build_distance_matrix_cached,
+    build_distance_matrix_cache_key,
     build_custom_curve,
+    DIST_MATRIX_CACHE,
+    DIST_MATRIX_CACHE_LOCK,
     recommend_crossfade_seconds,
     transition_component_breakdown,
     normalize_component_contributions,
@@ -464,3 +469,46 @@ def test_blend_distance_matrix_with_model_influences_scores():
         model_alpha=0.5,
     )
     assert blended[0][1] > 0.2
+
+
+def test_distance_matrix_cache_key_is_stable_and_sensitive_to_inputs():
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.8, 140.0),
+    ]
+    key_a = build_distance_matrix_cache_key(tracks, {"bpm": 0.4, "key": 0.3}, 0.08)
+    key_b = build_distance_matrix_cache_key(tracks, {"key": 0.3, "bpm": 0.4}, 0.08)
+    key_c = build_distance_matrix_cache_key(tracks, {"bpm": 0.5, "key": 0.3}, 0.08)
+
+    assert key_a == key_b
+    assert key_a != key_c
+
+
+def test_build_distance_matrix_cached_returns_cache_hit_on_second_call(monkeypatch):
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.8, 140.0),
+        make_track("c-1", 0.6, 128.0),
+    ]
+    context = FeatureContext(
+        scales={
+            "energy": 0.2,
+            "valence": 0.2,
+            "danceability": 0.2,
+            "loudness": 5.0,
+        }
+    )
+    weights = {"bpm": 0.4, "key": 0.3, "energy": 0.2, "loudness": 0.1}
+
+    monkeypatch.setattr(core, "DIST_MATRIX_CACHE_MAX", 8)
+    monkeypatch.setattr(core, "DIST_MATRIX_CACHE_TTL_SECONDS", 3600)
+    with DIST_MATRIX_CACHE_LOCK:
+        DIST_MATRIX_CACHE.clear()
+
+    dist_first, hit_first = build_distance_matrix_cached(tracks, weights, 0.08, context)
+    dist_second, hit_second = build_distance_matrix_cached(tracks, weights, 0.08, context)
+
+    assert hit_first is False
+    assert hit_second is True
+    assert dist_first == dist_second
+    assert dist_first is not dist_second

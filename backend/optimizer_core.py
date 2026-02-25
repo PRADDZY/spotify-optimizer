@@ -1,11 +1,14 @@
 ﻿
 import json
+import hashlib
 import math
 import os
 import random
 import re
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
@@ -108,6 +111,11 @@ MODEL_FEATURE_KEYS = [
     "tempo_jump",
     "energy_jump",
 ]
+
+DIST_MATRIX_CACHE_MAX = max(0, int(os.getenv("DIST_MATRIX_CACHE_MAX", "16")))
+DIST_MATRIX_CACHE_TTL_SECONDS = max(0, int(os.getenv("DIST_MATRIX_CACHE_TTL_SECONDS", "1800")))
+DIST_MATRIX_CACHE: OrderedDict[str, tuple[float, List[List[float]]]] = OrderedDict()
+DIST_MATRIX_CACHE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -796,6 +804,73 @@ def blend_distance_matrix_with_model(
             dist[i][j] = clamp01(blended)
             dist[j][i] = dist[i][j]
     return dist
+
+
+def clone_matrix(dist: List[List[float]]) -> List[List[float]]:
+    return [row[:] for row in dist]
+
+
+def track_cache_signature(track: Track) -> dict:
+    features = track.features or {}
+    return {
+        "id": track.id,
+        "tempo": features.get("tempo"),
+        "key": features.get("key"),
+        "mode": features.get("mode"),
+        "energy": features.get("energy"),
+        "valence": features.get("valence"),
+        "danceability": features.get("danceability"),
+        "loudness": features.get("loudness"),
+        "time_signature": features.get("time_signature"),
+        "duration_ms": track.duration_ms,
+        "explicit": track.explicit,
+    }
+
+
+def build_distance_matrix_cache_key(
+    tracks: List[Track],
+    weights: Dict[str, float],
+    bpm_window: float,
+) -> str:
+    payload = {
+        "bpm_window": round(float(bpm_window), 6),
+        "weights": {key: round(float(value), 6) for key, value in sorted(weights.items())},
+        "tracks": [track_cache_signature(track) for track in tracks],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha1(encoded).hexdigest()
+
+
+def build_distance_matrix_cached(
+    tracks: List[Track],
+    weights: Dict[str, float],
+    bpm_window: float,
+    context: FeatureContext,
+) -> tuple[List[List[float]], bool]:
+    if DIST_MATRIX_CACHE_MAX <= 0 or DIST_MATRIX_CACHE_TTL_SECONDS <= 0:
+        return build_distance_matrix(tracks, weights, bpm_window, context), False
+
+    cache_key = build_distance_matrix_cache_key(tracks, weights, bpm_window)
+    now = time.time()
+
+    with DIST_MATRIX_CACHE_LOCK:
+        cached = DIST_MATRIX_CACHE.get(cache_key)
+        if cached:
+            created_at, matrix = cached
+            if now - created_at <= DIST_MATRIX_CACHE_TTL_SECONDS:
+                DIST_MATRIX_CACHE.move_to_end(cache_key)
+                return clone_matrix(matrix), True
+            DIST_MATRIX_CACHE.pop(cache_key, None)
+
+    dist = build_distance_matrix(tracks, weights, bpm_window, context)
+
+    with DIST_MATRIX_CACHE_LOCK:
+        DIST_MATRIX_CACHE[cache_key] = (now, clone_matrix(dist))
+        DIST_MATRIX_CACHE.move_to_end(cache_key)
+        while len(DIST_MATRIX_CACHE) > DIST_MATRIX_CACHE_MAX:
+            DIST_MATRIX_CACHE.popitem(last=False)
+
+    return dist, False
 
 
 def build_distance_matrix(
@@ -2047,7 +2122,7 @@ def optimize_tracks(
     resolved_weights = resolve_weights(weights, mix_mode)
     resolved_weights = apply_weight_offsets(resolved_weights, feedback_offsets)
     context = build_feature_context(with_features)
-    dist = build_distance_matrix(with_features, resolved_weights, bpm_window, context)
+    dist, _ = build_distance_matrix_cached(with_features, resolved_weights, bpm_window, context)
     dist = blend_distance_matrix_with_model(
         dist,
         with_features,
