@@ -5,7 +5,6 @@ import secrets
 import threading
 import time
 import uuid
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,6 +31,7 @@ from .optimizer_core import (
     optimize_tracks,
     parse_playlist_id,
 )
+from .state_store import DurableDict, DurableEventBuffer, SQLiteStateStore
 
 load_dotenv()
 
@@ -190,18 +190,23 @@ def setup_logging() -> logging.Logger:
 
 
 LOGGER = setup_logging()
-RUN_HISTORY: dict[str, dict] = {}
-COMPARISON_HISTORY: dict[str, dict] = {}
-PRESET_STORE: dict[str, dict] = {}
-SNAPSHOT_STORE: dict[str, dict] = {}
-BATCH_STORE: dict[str, dict] = {}
-SCHEDULE_STORE: dict[str, dict] = {}
+STATE_DB_PATH = os.getenv(
+    "STATE_DB_PATH",
+    os.path.join(os.path.dirname(__file__), "data", "state.db"),
+)
+STATE_STORE = SQLiteStateStore(STATE_DB_PATH)
+RUN_HISTORY = DurableDict(STATE_STORE, "run_history")
+COMPARISON_HISTORY = DurableDict(STATE_STORE, "comparison_history")
+PRESET_STORE = DurableDict(STATE_STORE, "preset_store")
+SNAPSHOT_STORE = DurableDict(STATE_STORE, "snapshot_store")
+BATCH_STORE = DurableDict(STATE_STORE, "batch_store")
+SCHEDULE_STORE = DurableDict(STATE_STORE, "schedule_store")
 SCHEDULER_STOP = threading.Event()
-FEEDBACK_STORE: list[dict] = []
-FEEDBACK_WEIGHT_OFFSETS: dict[str, dict[str, float]] = {}
-RUN_TASK_STATUS: dict[str, dict] = {}
-RUN_EVENT_BUFFERS: dict[str, list[dict]] = defaultdict(list)
-REPORT_STORE: dict[str, dict] = {}
+FEEDBACK_STORE = DurableDict(STATE_STORE, "feedback_store")
+FEEDBACK_WEIGHT_OFFSETS = DurableDict(STATE_STORE, "feedback_weight_offsets")
+RUN_TASK_STATUS = DurableDict(STATE_STORE, "run_task_status")
+EVENT_STORE = DurableEventBuffer(STATE_STORE, "run_event_buffer")
+REPORT_STORE = DurableDict(STATE_STORE, "report_store")
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -488,6 +493,7 @@ def health():
 def readiness():
     checks = {
         "sessions": STORE.ping(),
+        "state_store": STATE_STORE.ping(),
     }
     rate_limit_ok = check_rate_limit_store()
     if rate_limit_ok is not None:
@@ -708,14 +714,14 @@ def run_events(run_id: str):
         initial = json.dumps({"event": "stream_open", "run_id": run_id})
         yield f"data: {initial}\n\n"
         while idle_ticks < 600:
-            events = RUN_EVENT_BUFFERS.get(run_id, [])
-            while cursor < len(events):
-                payload = json.dumps(events[cursor])
-                cursor += 1
+            events = EVENT_STORE.list_after(run_id, after_seq=cursor)
+            for seq, event in events:
+                payload = json.dumps(event)
+                cursor = seq
                 yield f"data: {payload}\n\n"
                 idle_ticks = 0
             status = RUN_TASK_STATUS.get(run_id, {})
-            if status.get("status") in {"completed", "failed"} and cursor >= len(events):
+            if status.get("status") in {"completed", "failed"} and not events:
                 break
             if idle_ticks % 30 == 0:
                 heartbeat = json.dumps({"event": "heartbeat", "run_id": run_id, "cursor": cursor})
@@ -934,17 +940,16 @@ def manual_feedback(request: Request, payload: ManualFeedbackRequest):
     if not feature:
         raise HTTPException(status_code=400, detail="feature could not be inferred")
 
-    FEEDBACK_STORE.append(
-        {
-            "owner_id": owner_id,
-            "run_id": payload.run_id,
-            "edge_index": payload.edge_index,
-            "rating": payload.rating,
-            "feature": feature,
-            "note": payload.note,
-            "created_at": time.time(),
-        }
-    )
+    feedback_id = uuid.uuid4().hex
+    FEEDBACK_STORE[feedback_id] = {
+        "owner_id": owner_id,
+        "run_id": payload.run_id,
+        "edge_index": payload.edge_index,
+        "rating": payload.rating,
+        "feature": feature,
+        "note": payload.note,
+        "created_at": time.time(),
+    }
     update_feedback_offsets(owner_id, feature, payload.rating)
     return {
         "saved": True,
@@ -1165,15 +1170,14 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
 
 
 def emit_run_event(run_id: str, event: str, progress: int, message: str, data: Optional[dict] = None) -> None:
-    RUN_EVENT_BUFFERS[run_id].append(
-        {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "event": event,
-            "progress": max(0, min(100, progress)),
-            "message": message,
-            "data": data or {},
-        }
-    )
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        "progress": max(0, min(100, progress)),
+        "message": message,
+        "data": data or {},
+    }
+    EVENT_STORE.append(run_id, payload)
     RUN_TASK_STATUS.setdefault(run_id, {})
     RUN_TASK_STATUS[run_id]["progress"] = max(0, min(100, progress))
 
