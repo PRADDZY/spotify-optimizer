@@ -91,6 +91,7 @@ class OptimizeRequest(BaseModel):
 
 
 class OptimizeResponse(BaseModel):
+    run_id: str
     playlist_id: str
     playlist_name: str
     playlist_url: str
@@ -115,6 +116,7 @@ def setup_logging() -> logging.Logger:
 
 
 LOGGER = setup_logging()
+RUN_HISTORY: dict[str, dict] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -509,7 +511,7 @@ def optimize(request: Request, payload: OptimizeRequest):
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
     playlist_id = parse_playlist_id(payload.playlist)
 
-    playlist_name, ordered_tracks, cost, roughest = optimize_tracks(
+    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
         sp=sp,
         playlist_id=playlist_id,
         cache_path=cache_path,
@@ -554,10 +556,35 @@ def optimize(request: Request, payload: OptimizeRequest):
     for i in range(0, len(ordered_ids), 100):
         sp.playlist_add_items(playlist_id, ordered_ids[i : i + 100])
 
+    run_id = uuid.uuid4().hex
+    RUN_HISTORY[run_id] = {
+        "playlist_id": playlist_id,
+        "playlist_name": playlist_name,
+        "transition_score": round(cost, 4),
+        "roughest": roughest,
+        "transitions": explainability,
+        "created_at": time.time(),
+    }
+
     return {
+        "run_id": run_id,
         "playlist_id": playlist_id,
         "playlist_name": new_name,
         "playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
         "transition_score": round(cost, 4),
         "roughest": roughest,
+    }
+
+
+@app.get("/optimize/{run_id}/transitions")
+def run_transitions(run_id: str):
+    run = RUN_HISTORY.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {
+        "run_id": run_id,
+        "playlist_id": run.get("playlist_id"),
+        "playlist_name": run.get("playlist_name"),
+        "transition_score": run.get("transition_score"),
+        "transitions": run.get("transitions", []),
     }

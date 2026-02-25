@@ -93,7 +93,7 @@ def main() -> None:
             if v is not None
         }
 
-        playlist_name, ordered_tracks, cost, roughest = optimize_tracks(
+        playlist_name, ordered_tracks, cost, roughest, _ = optimize_tracks(
             sp=sp,
             playlist_id=playlist_id,
             cache_path=args.cache,

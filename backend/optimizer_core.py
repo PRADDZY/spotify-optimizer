@@ -1443,6 +1443,68 @@ def transition_record(from_track: Track, to_track: Track, score: float, index: i
     }
 
 
+def transition_component_breakdown(
+    from_track: Track,
+    to_track: Track,
+    weights: Dict[str, float],
+    bpm_window: float,
+    context: FeatureContext,
+) -> Dict[str, float]:
+    f1 = from_track.features or {}
+    f2 = to_track.features or {}
+    return {
+        "bpm": weights.get("bpm", 0.0) * bpm_distance(f1.get("tempo"), f2.get("tempo"), bpm_window),
+        "key": weights.get("key", 0.0) * key_distance(f1.get("key"), f1.get("mode"), f2.get("key"), f2.get("mode")),
+        "energy": weights.get("energy", 0.0) * scaled_diff(f1.get("energy"), f2.get("energy"), context.scales.get("energy", 0.1)),
+        "valence": weights.get("valence", 0.0) * scaled_diff(f1.get("valence"), f2.get("valence"), context.scales.get("valence", 0.1)),
+        "dance": weights.get("dance", 0.0) * scaled_diff(f1.get("danceability"), f2.get("danceability"), context.scales.get("danceability", 0.1)),
+        "loudness": weights.get("loudness", 0.0) * loudness_distance(f1.get("loudness"), f2.get("loudness"), context.scales.get("loudness", 6.0)),
+    }
+
+
+def transition_reason(components: Dict[str, float]) -> str:
+    if not components:
+        return "Balanced transition profile."
+    top_metric = max(components.items(), key=lambda item: item[1])[0]
+    reasons = {
+        "bpm": "Tempo mismatch drives this transition cost.",
+        "key": "Harmonic/key mismatch is the main issue.",
+        "energy": "Energy shift is the largest contributor.",
+        "valence": "Mood/valence change contributes most.",
+        "dance": "Danceability contrast is dominant.",
+        "loudness": "Perceived loudness gap is dominant.",
+    }
+    return reasons.get(top_metric, "Multiple factors contribute to this transition.")
+
+
+def build_transition_explainability(
+    tracks: List[Track],
+    order: List[int],
+    dist: List[List[float]],
+    weights: Dict[str, float],
+    bpm_window: float,
+    context: FeatureContext,
+) -> List[Dict]:
+    details: List[Dict] = []
+    if len(order) < 2:
+        return details
+
+    for pos in range(len(order) - 1):
+        left_idx = order[pos]
+        right_idx = order[pos + 1]
+        left_track = tracks[left_idx]
+        right_track = tracks[right_idx]
+        components = transition_component_breakdown(left_track, right_track, weights, bpm_window, context)
+        details.append(
+            {
+                **transition_record(left_track, right_track, dist[left_idx][right_idx], pos),
+                "components": components,
+                "reason": transition_reason(components),
+            }
+        )
+    return details
+
+
 def append_transition_log(
     path: Optional[str],
     playlist_id: str,
@@ -1535,7 +1597,7 @@ def optimize_tracks(
     bpm_guardrails: Optional[List[float]] = None,
     harmonic_strict: bool = False,
     transition_log_path: Optional[str] = None,
-) -> Tuple[str, List[Track], float, List[Dict]]:
+) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
     if not tracks:
         raise RuntimeError("No playable tracks found in playlist.")
@@ -1637,6 +1699,14 @@ def optimize_tracks(
         ordered_tracks.extend(missing_tracks)
 
     roughest = summarize_transitions(with_features, dist, order, limit=5)
+    explainability = build_transition_explainability(
+        tracks=with_features,
+        order=order,
+        dist=dist,
+        weights=resolved_weights,
+        bpm_window=bpm_window,
+        context=context,
+    )
 
     append_transition_log(
         path=transition_log_path,
@@ -1651,4 +1721,4 @@ def optimize_tracks(
         bpm_window=bpm_window,
     )
 
-    return playlist_name, ordered_tracks, cost, roughest
+    return playlist_name, ordered_tracks, cost, roughest, explainability

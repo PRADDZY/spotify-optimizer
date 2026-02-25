@@ -1,6 +1,7 @@
 import json
 
 from backend.optimizer_core import (
+    FeatureContext,
     OptimizationConfig,
     Track,
     apply_fixed_endpoints,
@@ -9,6 +10,8 @@ from backend.optimizer_core import (
     apply_duration_target,
     append_transition_log,
     build_custom_curve,
+    transition_component_breakdown,
+    transition_reason,
     build_energy_curve,
     minimax_refine,
     order_cost,
@@ -241,6 +244,28 @@ def test_harmonic_strict_penalizes_incompatible_key_pairs():
     worse = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
     better = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
     assert better < worse
+
+
+def test_transition_explainability_identifies_top_component():
+    left = make_track("artist1-a", 0.2, 90.0)
+    right = make_track("artist2-b", 0.9, 140.0)
+    context = FeatureContext(
+        scales={
+            "energy": 0.2,
+            "valence": 0.2,
+            "danceability": 0.2,
+            "loudness": 4.0,
+        }
+    )
+    components = transition_component_breakdown(
+        left,
+        right,
+        weights={"bpm": 0.5, "key": 0.1, "energy": 0.2, "valence": 0.0, "dance": 0.0, "loudness": 0.0},
+        bpm_window=0.05,
+        context=context,
+    )
+    reason = transition_reason(components)
+    assert "Tempo" in reason
 
 
 def test_album_gap_penalty_prefers_spaced_albums():
