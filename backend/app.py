@@ -69,6 +69,7 @@ class OptimizeRequest(BaseModel):
     locked_first_track_id: Optional[str] = None
     locked_last_track_id: Optional[str] = None
     locked_blocks: Optional[list[list[str]]] = None
+    artist_gap: int = Field(0, ge=0, le=20)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -512,6 +513,7 @@ def optimize(request: Request, payload: OptimizeRequest):
         locked_first_track_id=payload.locked_first_track_id,
         locked_last_track_id=payload.locked_last_track_id,
         locked_blocks=payload.locked_blocks,
+        artist_gap=payload.artist_gap,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 

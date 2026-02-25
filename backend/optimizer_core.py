@@ -5,7 +5,7 @@ import os
 import random
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -103,6 +103,11 @@ class Track:
     name: str
     artists: str
     features: Optional[Dict]
+    artist_ids: List[str] = field(default_factory=list)
+    album_id: Optional[str] = None
+    explicit: bool = False
+    duration_ms: int = 0
+    genres: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -118,6 +123,7 @@ class OptimizationConfig:
     key_lock_window: int = 3
     tempo_ramp_weight: float = 0.08
     minimax_passes: int = 2
+    artist_gap: int = 0
 
 
 def parse_playlist_id(value: str) -> str:
@@ -171,7 +177,7 @@ def get_spotify_client(auth_mode: str, redirect_uri: str, scopes: str) -> spotip
 def fetch_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> Tuple[str, List[Track]]:
     results = sp.playlist_items(
         playlist_id,
-        fields="items(track(id,name,artists(name)),is_local),next,total",
+        fields="items(track(id,name,artists(id,name),album(id),explicit,duration_ms),is_local),next,total",
         additional_types=["track"],
         limit=100,
     )
@@ -184,8 +190,21 @@ def fetch_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> Tuple[str, L
             track = item.get("track")
             if item.get("is_local") or not track or not track.get("id"):
                 continue
-            artists = ", ".join([a.get("name", "") for a in track.get("artists", [])])
-            tracks.append(Track(id=track["id"], name=track.get("name", ""), artists=artists, features=None))
+            artists_payload = track.get("artists", [])
+            artists = ", ".join([a.get("name", "") for a in artists_payload])
+            artist_ids = [a.get("id") for a in artists_payload if a.get("id")]
+            tracks.append(
+                Track(
+                    id=track["id"],
+                    name=track.get("name", ""),
+                    artists=artists,
+                    features=None,
+                    artist_ids=artist_ids,
+                    album_id=(track.get("album") or {}).get("id"),
+                    explicit=bool(track.get("explicit", False)),
+                    duration_ms=int(track.get("duration_ms") or 0),
+                )
+            )
         if results.get("next"):
             results = sp.next(results)
         else:
@@ -635,6 +654,36 @@ def key_lock_penalty(order: List[int], tracks: List[Track], window: int) -> floa
     return penalty / denom
 
 
+def repetition_gap_penalty(
+    order: List[int],
+    tracks: List[Track],
+    gap: int,
+    key_fn: Callable[[Track], Optional[str]],
+) -> float:
+    if gap <= 0 or len(order) < 2:
+        return 0.0
+
+    penalty = 0.0
+    checks = 0.0
+    for i in range(len(order)):
+        left = tracks[order[i]]
+        left_key = key_fn(left)
+        if not left_key:
+            continue
+        for step in range(1, gap + 1):
+            j = i + step
+            if j >= len(order):
+                break
+            right_key = key_fn(tracks[order[j]])
+            checks += 1.0
+            if left_key == right_key:
+                penalty += (gap + 1 - step) / (gap + 1)
+
+    if checks <= 0:
+        return 0.0
+    return penalty / checks
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -660,6 +709,13 @@ def order_cost(
 
     if config.key_lock_window > 1:
         cost += 0.12 * key_lock_penalty(order, tracks, config.key_lock_window)
+    if config.artist_gap > 0:
+        cost += 0.18 * repetition_gap_penalty(
+            order,
+            tracks,
+            config.artist_gap,
+            key_fn=lambda track: track.artist_ids[0] if track.artist_ids else (track.artists or None),
+        )
 
     return cost
 
@@ -1250,6 +1306,7 @@ def optimize_tracks(
     locked_first_track_id: Optional[str] = None,
     locked_last_track_id: Optional[str] = None,
     locked_blocks: Optional[List[List[str]]] = None,
+    artist_gap: int = 0,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1275,6 +1332,7 @@ def optimize_tracks(
         key_lock_window=max(1, key_lock_window),
         tempo_ramp_weight=max(0.0, tempo_ramp_weight),
         minimax_passes=max(0, minimax_passes),
+        artist_gap=max(0, artist_gap),
     )
 
     energy_targets: Optional[List[float]] = None

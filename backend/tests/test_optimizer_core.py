@@ -18,6 +18,7 @@ def make_track(track_id: str, energy: float, tempo: float, key: int = 0, mode: i
         id=track_id,
         name=track_id,
         artists="tester",
+        artist_ids=[track_id.split("-")[0]],
         features={
             "energy": energy,
             "tempo": tempo,
@@ -144,3 +145,16 @@ def test_apply_locked_blocks_keeps_block_contiguous():
     ids = [tracks[idx].id for idx in fixed]
     joined = ",".join(ids)
     assert "b,d" in joined
+
+
+def test_artist_gap_penalty_prefers_spaced_artists():
+    tracks = [
+        make_track("artist1-a", 0.2, 100.0),
+        make_track("artist1-b", 0.4, 110.0),
+        make_track("artist2-a", 0.6, 120.0),
+    ]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(artist_gap=2)
+    crowded = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
+    spaced = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
+    assert spaced < crowded
