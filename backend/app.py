@@ -87,6 +87,8 @@ class OptimizeRequest(BaseModel):
     mood_curve_points: Optional[list[MoodPoint]] = None
     bpm_guardrails: Optional[list[float]] = None
     harmonic_strict: bool = False
+    smoothness_weight: float = Field(1.0, ge=0.0, le=5.0)
+    variety_weight: float = Field(0.0, ge=0.0, le=5.0)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -655,6 +657,8 @@ def optimize(request: Request, payload: OptimizeRequest):
         bpm_guardrails=payload.bpm_guardrails or [],
         harmonic_strict=payload.harmonic_strict,
         feedback_offsets=feedback_offsets,
+        smoothness_weight=payload.smoothness_weight,
+        variety_weight=payload.variety_weight,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
@@ -954,6 +958,8 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 bpm_guardrails=cfg_payload.bpm_guardrails or [],
                 harmonic_strict=cfg_payload.harmonic_strict,
                 feedback_offsets=feedback_offsets,
+                smoothness_weight=cfg_payload.smoothness_weight,
+                variety_weight=cfg_payload.variety_weight,
                 transition_log_path=TRANSITION_LOG_PATH,
             )
 
@@ -1359,6 +1365,8 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         bpm_guardrails=replay.bpm_guardrails or [],
         harmonic_strict=replay.harmonic_strict,
         feedback_offsets=feedback_offsets,
+        smoothness_weight=replay.smoothness_weight,
+        variety_weight=replay.variety_weight,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 

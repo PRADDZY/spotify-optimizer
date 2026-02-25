@@ -14,6 +14,7 @@ from backend.optimizer_core import (
     recommend_crossfade_seconds,
     transition_component_breakdown,
     transition_reason,
+    variety_penalty,
     build_energy_curve,
     minimax_refine,
     order_cost,
@@ -283,6 +284,19 @@ def test_feedback_weight_offsets_adjust_distribution():
     base = {"bpm": 0.4, "key": 0.3, "energy": 0.3}
     adjusted = apply_weight_offsets(base, {"energy": 0.1, "key": -0.1})
     assert adjusted["energy"] > adjusted["key"]
+
+
+def test_variety_penalty_higher_for_repeating_artist_sequence():
+    t1 = make_track("artist1-a", 0.2, 100.0)
+    t2 = make_track("artist1-b", 0.4, 110.0)
+    t3 = make_track("artist2-c", 0.6, 120.0)
+    t1.genres = ["house"]
+    t2.genres = ["house"]
+    t3.genres = ["rock"]
+    tracks = [t1, t2, t3]
+    repeated = variety_penalty([0, 1, 2], tracks)
+    mixed = variety_penalty([0, 2, 1], tracks)
+    assert mixed <= repeated
 
 
 def test_album_gap_penalty_prefers_spaced_albums():

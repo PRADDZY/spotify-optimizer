@@ -129,6 +129,8 @@ class OptimizationConfig:
     genre_cluster_strength: float = 0.0
     bpm_guardrails: List[float] = field(default_factory=list)
     harmonic_strict: bool = False
+    smoothness_weight: float = 1.0
+    variety_weight: float = 0.0
 
 
 def parse_playlist_id(value: str) -> str:
@@ -857,6 +859,27 @@ def harmonic_strict_penalty(order: List[int], tracks: List[Track]) -> float:
     return violations / max(1, total)
 
 
+def variety_penalty(order: List[int], tracks: List[Track]) -> float:
+    if len(order) < 2:
+        return 0.0
+    same_artist_adjacent = 0.0
+    same_genre_adjacent = 0.0
+    total = 0.0
+    for i in range(len(order) - 1):
+        left = tracks[order[i]]
+        right = tracks[order[i + 1]]
+        total += 1.0
+        left_artist = left.artist_ids[0] if left.artist_ids else left.artists
+        right_artist = right.artist_ids[0] if right.artist_ids else right.artists
+        if left_artist and right_artist and left_artist == right_artist:
+            same_artist_adjacent += 1.0
+        left_genre = left.genres[0] if left.genres else "unknown"
+        right_genre = right.genres[0] if right.genres else "unknown"
+        if left_genre == right_genre:
+            same_genre_adjacent += 1.0
+    return (same_artist_adjacent * 0.7 + same_genre_adjacent * 0.3) / max(1.0, total)
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -905,7 +928,9 @@ def order_cost(
     if config.harmonic_strict:
         cost += 0.35 * harmonic_strict_penalty(order, tracks)
 
-    return cost
+    if config.variety_weight > 0:
+        return config.smoothness_weight * cost + config.variety_weight * variety_penalty(order, tracks)
+    return config.smoothness_weight * cost
 
 
 def nearest_neighbor(dist: List[List[float]], start: int, rng: Optional[random.Random] = None, k: int = 3) -> List[int]:
@@ -1624,6 +1649,8 @@ def optimize_tracks(
     bpm_guardrails: Optional[List[float]] = None,
     harmonic_strict: bool = False,
     feedback_offsets: Optional[Dict[str, float]] = None,
+    smoothness_weight: float = 1.0,
+    variety_weight: float = 0.0,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1663,6 +1690,8 @@ def optimize_tracks(
         genre_cluster_strength=max(0.0, genre_cluster_strength),
         bpm_guardrails=sorted([float(value) for value in (bpm_guardrails or []) if float(value) > 0]),
         harmonic_strict=bool(harmonic_strict),
+        smoothness_weight=max(0.0, float(smoothness_weight)),
+        variety_weight=max(0.0, float(variety_weight)),
     )
 
     energy_targets: Optional[List[float]] = None
