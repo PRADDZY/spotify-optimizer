@@ -230,6 +230,19 @@ def test_bpm_guardrails_penalize_large_band_jumps():
     assert smoother < jumpy
 
 
+def test_harmonic_strict_penalizes_incompatible_key_pairs():
+    tracks = [
+        make_track("a-1", 0.2, 100.0, key=0, mode=1),
+        make_track("b-1", 0.4, 110.0, key=2, mode=1),
+        make_track("c-1", 0.6, 120.0, key=0, mode=1),
+    ]
+    dist = [[0.0 for _ in tracks] for _ in tracks]
+    config = OptimizationConfig(harmonic_strict=True)
+    worse = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
+    better = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
+    assert better < worse
+
+
 def test_album_gap_penalty_prefers_spaced_albums():
     tracks = [
         make_track("artist1-album1-a", 0.2, 100.0),

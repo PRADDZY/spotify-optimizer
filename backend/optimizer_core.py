@@ -128,6 +128,7 @@ class OptimizationConfig:
     explicit_mode: str = "allow"
     genre_cluster_strength: float = 0.0
     bpm_guardrails: List[float] = field(default_factory=list)
+    harmonic_strict: bool = False
 
 
 def parse_playlist_id(value: str) -> str:
@@ -830,6 +831,21 @@ def bpm_guardrail_penalty(order: List[int], tracks: List[Track], bands: List[flo
     return penalty / checks
 
 
+def harmonic_strict_penalty(order: List[int], tracks: List[Track]) -> float:
+    if len(order) < 2:
+        return 0.0
+    violations = 0
+    total = 0
+    for i in range(len(order) - 1):
+        left = tracks[order[i]].features or {}
+        right = tracks[order[i + 1]].features or {}
+        kd = key_distance(left.get("key"), left.get("mode"), right.get("key"), right.get("mode"))
+        total += 1
+        if kd > 0.45:
+            violations += 1
+    return violations / max(1, total)
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -875,6 +891,8 @@ def order_cost(
         cost += config.genre_cluster_strength * 0.12 * genre_switch_penalty(order, tracks)
     if config.bpm_guardrails:
         cost += 0.11 * bpm_guardrail_penalty(order, tracks, config.bpm_guardrails)
+    if config.harmonic_strict:
+        cost += 0.35 * harmonic_strict_penalty(order, tracks)
 
     return cost
 
@@ -1515,6 +1533,7 @@ def optimize_tracks(
     genre_cluster_strength: float = 0.0,
     mood_curve_points: Optional[List[Dict[str, float]]] = None,
     bpm_guardrails: Optional[List[float]] = None,
+    harmonic_strict: bool = False,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1552,6 +1571,7 @@ def optimize_tracks(
         explicit_mode=explicit_mode,
         genre_cluster_strength=max(0.0, genre_cluster_strength),
         bpm_guardrails=sorted([float(value) for value in (bpm_guardrails or []) if float(value) > 0]),
+        harmonic_strict=bool(harmonic_strict),
     )
 
     energy_targets: Optional[List[float]] = None
