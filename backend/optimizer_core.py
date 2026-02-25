@@ -136,6 +136,8 @@ class OptimizationConfig:
     max_bpm_jump: Optional[float] = None
     min_key_compatibility: Optional[float] = None
     no_repeat_artist_within: int = 0
+    lookahead_horizon: int = 3
+    lookahead_decay: float = 0.6
 
 
 def parse_playlist_id(value: str) -> str:
@@ -967,6 +969,28 @@ def hard_constraint_penalty(
     return violations / checks
 
 
+def lookahead_penalty(order: List[int], dist: List[List[float]], horizon: int, decay: float) -> float:
+    if len(order) < 3 or horizon <= 1:
+        return 0.0
+    decay = min(0.99, max(0.05, float(decay)))
+    horizon = max(2, int(horizon))
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for i in range(len(order) - 1):
+        for step in range(2, horizon + 1):
+            edge_pos = i + step - 1
+            if edge_pos >= len(order) - 1:
+                break
+            weight = decay ** (step - 2)
+            weighted_sum += weight * dist[order[edge_pos]][order[edge_pos + 1]]
+            weight_total += weight
+
+    if weight_total <= 1e-9:
+        return 0.0
+    return weighted_sum / weight_total
+
+
 def order_cost(
     order: List[int],
     dist: List[List[float]],
@@ -1025,6 +1049,13 @@ def order_cost(
             max_bpm_jump=config.max_bpm_jump,
             min_key_compatibility=config.min_key_compatibility,
             no_repeat_artist_within=config.no_repeat_artist_within,
+        )
+    if config.lookahead_horizon > 1:
+        cost += 0.28 * lookahead_penalty(
+            order,
+            dist,
+            horizon=config.lookahead_horizon,
+            decay=config.lookahead_decay,
         )
 
     if config.variety_weight > 0:
@@ -1822,6 +1853,8 @@ def append_transition_log(
             "key_lock_window": config.key_lock_window,
             "tempo_ramp_weight": config.tempo_ramp_weight,
             "minimax_passes": config.minimax_passes,
+            "lookahead_horizon": config.lookahead_horizon,
+            "lookahead_decay": config.lookahead_decay,
         },
         "transitions": transitions,
     }
@@ -1891,6 +1924,8 @@ def optimize_tracks(
     anneal_steps: int = 140,
     anneal_temp_start: float = 0.08,
     anneal_temp_end: float = 0.004,
+    lookahead_horizon: int = 3,
+    lookahead_decay: float = 0.6,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1937,6 +1972,8 @@ def optimize_tracks(
         if min_key_compatibility is not None
         else None,
         no_repeat_artist_within=max(0, int(no_repeat_artist_within)),
+        lookahead_horizon=max(1, int(lookahead_horizon)),
+        lookahead_decay=min(0.99, max(0.05, float(lookahead_decay))),
     )
 
     energy_targets: Optional[List[float]] = None

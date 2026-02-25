@@ -109,6 +109,8 @@ class OptimizeRequest(BaseModel):
     anneal_steps: int = Field(140, ge=0, le=1500)
     anneal_temp_start: float = Field(0.08, ge=0.0001, le=2.0)
     anneal_temp_end: float = Field(0.004, ge=0.0001, le=2.0)
+    lookahead_horizon: int = Field(3, ge=1, le=8)
+    lookahead_decay: float = Field(0.6, ge=0.05, le=0.99)
     bpm_window: float = Field(0.08, ge=0.0, le=0.5)
     restarts: int = Field(12, ge=1, le=100)
     two_opt_passes: int = Field(2, ge=1, le=10)
@@ -1395,6 +1397,8 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 anneal_steps=cfg_payload.anneal_steps,
                 anneal_temp_start=cfg_payload.anneal_temp_start,
                 anneal_temp_end=cfg_payload.anneal_temp_end,
+                lookahead_horizon=cfg_payload.lookahead_horizon,
+                lookahead_decay=cfg_payload.lookahead_decay,
                 transition_log_path=TRANSITION_LOG_PATH,
             )
 
@@ -1531,6 +1535,8 @@ def run_single_optimization(
         anneal_steps=payload.anneal_steps,
         anneal_temp_start=payload.anneal_temp_start,
         anneal_temp_end=payload.anneal_temp_end,
+        lookahead_horizon=payload.lookahead_horizon,
+        lookahead_decay=payload.lookahead_decay,
         transition_log_path=TRANSITION_LOG_PATH,
     )
     emit_run_event(run_id, "search", 65, "Optimization complete", {"transitions": len(explainability)})
@@ -1938,6 +1944,8 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         anneal_steps=replay.anneal_steps,
         anneal_temp_start=replay.anneal_temp_start,
         anneal_temp_end=replay.anneal_temp_end,
+        lookahead_horizon=replay.lookahead_horizon,
+        lookahead_decay=replay.lookahead_decay,
         transition_log_path=TRANSITION_LOG_PATH,
     )
 
