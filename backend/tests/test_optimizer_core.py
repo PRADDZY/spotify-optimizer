@@ -1,4 +1,5 @@
 import json
+from itertools import permutations
 import backend.optimizer_core as core
 
 from backend.optimizer_core import (
@@ -20,6 +21,7 @@ from backend.optimizer_core import (
     dedupe_candidate_orders,
     DIST_MATRIX_CACHE,
     DIST_MATRIX_CACHE_LOCK,
+    exact_path_order,
     recommend_crossfade_seconds,
     transition_component_breakdown,
     normalize_component_contributions,
@@ -544,3 +546,66 @@ def test_dedupe_candidate_orders_keeps_first_occurrence_order():
         ]
     )
     assert deduped == [[0, 1, 2, 3], [1, 0, 2, 3], [2, 3, 1, 0]]
+
+
+def test_exact_path_order_matches_bruteforce_for_small_graph():
+    dist = [
+        [0.0, 0.2, 0.8, 0.5],
+        [0.2, 0.0, 0.3, 0.9],
+        [0.8, 0.3, 0.0, 0.2],
+        [0.5, 0.9, 0.2, 0.0],
+    ]
+
+    order = exact_path_order(dist)
+    best = min(
+        permutations(range(4)),
+        key=lambda perm: sum(dist[perm[i]][perm[i + 1]] for i in range(3)),
+    )
+
+    expected_cost = sum(dist[best[i]][best[i + 1]] for i in range(3))
+    actual_cost = sum(dist[order[i]][order[i + 1]] for i in range(3))
+    assert sorted(order) == [0, 1, 2, 3]
+    assert actual_cost == expected_cost
+
+
+def test_optimize_order_uses_exact_seed_for_small_instances(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.8, 0.5],
+        [0.2, 0.0, 0.3, 0.9],
+        [0.8, 0.3, 0.0, 0.2],
+        [0.5, 0.9, 0.2, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+    calls = {"count": 0}
+
+    def fake_exact(_dist):
+        calls["count"] += 1
+        return [0, 1, 2, 3]
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 6)
+    monkeypatch.setattr(core, "exact_path_order", fake_exact)
+
+    core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=2,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=0,
+        solver_mode="classic",
+        beam_width=4,
+        anneal_steps=0,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+    )
+
+    assert calls["count"] == 1

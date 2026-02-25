@@ -116,6 +116,7 @@ DIST_MATRIX_CACHE_MAX = max(0, int(os.getenv("DIST_MATRIX_CACHE_MAX", "16")))
 DIST_MATRIX_CACHE_TTL_SECONDS = max(0, int(os.getenv("DIST_MATRIX_CACHE_TTL_SECONDS", "1800")))
 DIST_MATRIX_CACHE: OrderedDict[str, tuple[float, List[List[float]]]] = OrderedDict()
 DIST_MATRIX_CACHE_LOCK = threading.Lock()
+EXACT_SOLVER_MAX_N = max(0, int(os.getenv("EXACT_SOLVER_MAX_N", "11")))
 
 
 @dataclass
@@ -1682,6 +1683,56 @@ def dedupe_candidate_orders(candidate_orders: List[List[int]]) -> List[List[int]
     return unique
 
 
+def exact_path_order(dist: List[List[float]]) -> List[int]:
+    n = len(dist)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0]
+
+    full_mask = (1 << n) - 1
+    dp: Dict[Tuple[int, int], float] = {}
+    parent: Dict[Tuple[int, int], int] = {}
+
+    for start in range(n):
+        key = (1 << start, start)
+        dp[key] = 0.0
+        parent[key] = -1
+
+    for mask in range(1 << n):
+        for end in range(n):
+            state = (mask, end)
+            current = dp.get(state)
+            if current is None:
+                continue
+            remaining = full_mask ^ mask
+            while remaining:
+                bit = remaining & -remaining
+                nxt = bit.bit_length() - 1
+                new_mask = mask | bit
+                new_state = (new_mask, nxt)
+                candidate = current + dist[end][nxt]
+                if candidate < dp.get(new_state, math.inf):
+                    dp[new_state] = candidate
+                    parent[new_state] = end
+                remaining ^= bit
+
+    best_end = min(range(n), key=lambda idx: dp.get((full_mask, idx), math.inf))
+    if not math.isfinite(dp.get((full_mask, best_end), math.inf)):
+        return list(range(n))
+
+    order: List[int] = []
+    mask = full_mask
+    node = best_end
+    while node >= 0:
+        order.append(node)
+        prev = parent.get((mask, node), -1)
+        mask ^= 1 << node
+        node = prev
+    order.reverse()
+    return order
+
+
 def optimize_order(
     dist: List[List[float]],
     tracks: List[Track],
@@ -1715,6 +1766,9 @@ def optimize_order(
     candidate_orders: List[List[int]] = []
     for idx, start in enumerate(starts):
         candidate_orders.append(nearest_neighbor(dist, start, rng if idx > 0 else None, k=4))
+
+    if EXACT_SOLVER_MAX_N > 1 and n <= EXACT_SOLVER_MAX_N:
+        candidate_orders.append(exact_path_order(dist))
 
     if solver_mode == "hybrid":
         beam_starts = starts[: max(2, min(5, beam_width))]
