@@ -71,6 +71,8 @@ MODEL_MIN_ACCURACY_DELTA = float(os.getenv("MODEL_MIN_ACCURACY_DELTA", "0.0"))
 MODEL_MAX_LOSS_DELTA = float(os.getenv("MODEL_MAX_LOSS_DELTA", "0.0"))
 MODEL_EVAL_WINDOW_DAYS = int(os.getenv("MODEL_EVAL_WINDOW_DAYS", "30"))
 OPTIMIZE_CONFIG_HASH_DEBUG = os.getenv("OPTIMIZE_CONFIG_HASH_DEBUG", "false").lower() == "true"
+OPTIMIZE_DIAGNOSTICS_DEBUG = os.getenv("OPTIMIZE_DIAGNOSTICS_DEBUG", "false").lower() == "true"
+DEFAULT_MAX_SOLVER_MS = max(0, int(os.getenv("DEFAULT_MAX_SOLVER_MS", "0")))
 MODEL_ADMIN_USER_IDS = {
     value.strip()
     for value in os.getenv("MODEL_ADMIN_USER_IDS", "").split(",")
@@ -2045,6 +2047,9 @@ def run_optimize_tracks_for_payload(
 ) -> tuple[str, str, list, float, list[dict], list[dict], dict]:
     source_playlist_id = source_playlist_id or parse_playlist_id(payload.playlist)
     weights = payload.weights.model_dump() if payload.weights else {}
+    effective_max_solver_ms = payload.max_solver_ms
+    if effective_max_solver_ms is None and DEFAULT_MAX_SOLVER_MS > 0:
+        effective_max_solver_ms = DEFAULT_MAX_SOLVER_MS
 
     playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics = optimize_tracks(
         sp=sp,
@@ -2085,7 +2090,7 @@ def run_optimize_tracks_for_payload(
         anneal_steps=payload.anneal_steps,
         anneal_temp_start=payload.anneal_temp_start,
         anneal_temp_end=payload.anneal_temp_end,
-        max_solver_ms=payload.max_solver_ms,
+        max_solver_ms=effective_max_solver_ms,
         lookahead_horizon=payload.lookahead_horizon,
         lookahead_decay=payload.lookahead_decay,
         model_weights=model_payload.get("weights"),
@@ -2163,9 +2168,10 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                     "transition_score": round(cost, 4),
                     "model_version": model_payload.get("version"),
                     "config_hash": config_hash,
-                    "solver_diagnostics": solver_diagnostics,
                 }
             )
+            if OPTIMIZE_DIAGNOSTICS_DEBUG:
+                items[-1]["solver_diagnostics"] = solver_diagnostics
         except Exception as exc:
             items.append(
                 {
@@ -2285,10 +2291,11 @@ def run_single_optimization(
         "transition_score": round(cost, 4),
         "roughest": roughest,
         "model_version": model_payload.get("version"),
-        "solver_diagnostics": solver_diagnostics,
     }
     if OPTIMIZE_CONFIG_HASH_DEBUG:
         response_payload["config_hash"] = config_hash
+    if OPTIMIZE_DIAGNOSTICS_DEBUG:
+        response_payload["solver_diagnostics"] = solver_diagnostics
     return response_payload
 
 
@@ -2654,8 +2661,9 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "transition_score": round(cost, 4),
         "roughest": roughest,
         "model_version": model_payload.get("version"),
-        "solver_diagnostics": solver_diagnostics,
     }
     if OPTIMIZE_CONFIG_HASH_DEBUG:
         response_payload["config_hash"] = config_hash
+    if OPTIMIZE_DIAGNOSTICS_DEBUG:
+        response_payload["solver_diagnostics"] = solver_diagnostics
     return response_payload

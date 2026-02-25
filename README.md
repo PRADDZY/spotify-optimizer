@@ -110,7 +110,10 @@ Backend: `http://localhost:8000`
 - Spotify API calls use automatic retry/backoff (`SPOTIFY_API_RETRIES`, `SPOTIFY_API_BACKOFF`) for transient failures.
 - API guardrails include request size limits (`MAX_REQUEST_BYTES`) and default security headers (`SECURITY_HEADERS_ENABLED`).
 - Set `OPTIMIZE_CONFIG_HASH_DEBUG=true` to include request config hash diagnostics in optimize responses.
+- Set `OPTIMIZE_DIAGNOSTICS_DEBUG=true` to include solver diagnostics in optimize responses.
+- Set `DEFAULT_MAX_SOLVER_MS` to enforce a global solver time budget when requests omit `max_solver_ms`.
 - Distance matrix caching can be tuned with `DIST_MATRIX_CACHE_MAX` and `DIST_MATRIX_CACHE_TTL_SECONDS`.
+- `EXACT_SOLVER_MAX_N` controls when the exact small-playlist seed path is used.
 - Use `Idempotency-Key` request header on `POST /optimize` and `POST /optimize/async` to avoid duplicate runs.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
 - `/metrics` exposes Prometheus-compatible metrics.
