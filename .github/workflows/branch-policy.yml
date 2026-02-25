@@ -1,0 +1,70 @@
+name: Branch Policy
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+jobs:
+  branch-name-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR source branch name
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_branch="${{ github.head_ref }}"
+          base_branch="${{ github.base_ref }}"
+
+          if [[ "$base_branch" != "main" ]]; then
+            echo "This policy only applies to pull requests targeting main."
+            exit 0
+          fi
+
+          if [[ "$head_branch" == "main" ]]; then
+            echo "PR source branch must not be main."
+            exit 1
+          fi
+
+          domain_pattern='^(feat|fix)/(backend|frontend|deploy)-[a-z0-9]+(-[a-z0-9]+){0,5}$'
+          simple_pattern='^(chore|docs|perf|test)/[a-z0-9]+(-[a-z0-9]+){0,5}$'
+
+          if [[ "$head_branch" =~ $domain_pattern || "$head_branch" =~ $simple_pattern ]]; then
+            echo "Branch name is valid: $head_branch"
+            exit 0
+          fi
+
+          echo "Invalid branch name: $head_branch"
+          echo "Allowed:"
+          echo "  feat/backend-<slug>, feat/frontend-<slug>, feat/deploy-<slug>"
+          echo "  fix/backend-<slug>, fix/frontend-<slug>, fix/deploy-<slug>"
+          echo "  chore/<slug>, docs/<slug>, perf/<slug>, test/<slug>"
+          exit 1
+
+  main-merge-commit-policy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Ensure main updates are merge commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          parents="$(git rev-list --parents -n 1 "$GITHUB_SHA")"
+          parent_count="$(awk '{print NF-1}' <<<"$parents")"
+
+          if (( parent_count >= 2 )); then
+            echo "Main update is a merge commit."
+            exit 0
+          fi
+
+          echo "Direct commits to main are blocked by policy."
+          echo "Commit $GITHUB_SHA has $parent_count parent(s), expected >= 2."
+          exit 1
+
