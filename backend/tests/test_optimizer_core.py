@@ -4,6 +4,7 @@ from backend.optimizer_core import (
     OptimizationConfig,
     Track,
     apply_fixed_endpoints,
+    apply_locked_blocks,
     append_transition_log,
     build_energy_curve,
     minimax_refine,
@@ -128,3 +129,18 @@ def test_apply_fixed_endpoints_keeps_requested_start_and_end():
     )
     assert tracks[fixed[0]].id == "a"
     assert tracks[fixed[-1]].id == "c"
+
+
+def test_apply_locked_blocks_keeps_block_contiguous():
+    tracks = [
+        make_track("a", 0.2, 100.0),
+        make_track("b", 0.4, 110.0),
+        make_track("c", 0.6, 120.0),
+        make_track("d", 0.8, 130.0),
+        make_track("e", 0.5, 115.0),
+    ]
+    order = [0, 2, 1, 4, 3]
+    fixed = apply_locked_blocks(order, tracks, [["b", "d"]])
+    ids = [tracks[idx].id for idx in fixed]
+    joined = ",".join(ids)
+    assert "b,d" in joined

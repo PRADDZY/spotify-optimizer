@@ -1108,6 +1108,47 @@ def apply_fixed_endpoints(
     return fixed_order
 
 
+def apply_locked_blocks(
+    order: List[int],
+    tracks: List[Track],
+    locked_blocks: Optional[List[List[str]]],
+) -> List[int]:
+    if not order or not locked_blocks:
+        return order
+
+    idx_by_id = {tracks[idx].id: idx for idx in order}
+    original_pos = {idx: pos for pos, idx in enumerate(order)}
+
+    block_indexes: List[List[int]] = []
+    blocked_set: set[int] = set()
+
+    for block in locked_blocks:
+        indexes: List[int] = []
+        for track_id in block:
+            idx = idx_by_id.get(track_id)
+            if idx is None or idx in blocked_set:
+                continue
+            indexes.append(idx)
+        if len(indexes) < 2:
+            continue
+        block_indexes.append(indexes)
+        blocked_set.update(indexes)
+
+    if not block_indexes:
+        return order
+
+    remaining = [idx for idx in order if idx not in blocked_set]
+    merged = list(remaining)
+    for block in block_indexes:
+        anchor = min(original_pos[idx] for idx in block)
+        insert_at = 0
+        while insert_at < len(merged) and original_pos[merged[insert_at]] < anchor:
+            insert_at += 1
+        merged[insert_at:insert_at] = block
+
+    return merged
+
+
 def transition_record(from_track: Track, to_track: Track, score: float, index: int) -> Dict:
     from_features = from_track.features or {}
     to_features = to_track.features or {}
@@ -1208,6 +1249,7 @@ def optimize_tracks(
     minimax_passes: int = 2,
     locked_first_track_id: Optional[str] = None,
     locked_last_track_id: Optional[str] = None,
+    locked_blocks: Optional[List[List[str]]] = None,
     transition_log_path: Optional[str] = None,
 ) -> Tuple[str, List[Track], float, List[Dict]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
@@ -1287,6 +1329,7 @@ def optimize_tracks(
         locked_first_track_id=locked_first_track_id,
         locked_last_track_id=locked_last_track_id,
     )
+    order = apply_locked_blocks(order, with_features, locked_blocks)
     cost = objective_fn(order)
 
     ordered_tracks = [with_features[i] for i in order]
