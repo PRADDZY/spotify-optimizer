@@ -1,4 +1,6 @@
 import json
+from itertools import permutations
+import backend.optimizer_core as core
 
 from backend.optimizer_core import (
     FeatureContext,
@@ -13,18 +15,28 @@ from backend.optimizer_core import (
     append_transition_log,
     beam_search_order,
     blend_distance_matrix_with_model,
+    build_distance_matrix_cached,
+    build_distance_matrix_cache_key,
     build_custom_curve,
+    dedupe_candidate_orders,
+    DIST_MATRIX_CACHE,
+    DIST_MATRIX_CACHE_LOCK,
+    exact_path_order,
     recommend_crossfade_seconds,
     transition_component_breakdown,
     normalize_component_contributions,
     transition_reason_code,
     transition_reason,
+    targeted_edge_repair,
     variety_penalty,
     build_energy_curve,
     lookahead_penalty,
     minimax_refine,
+    memoize_order_objective,
     order_cost,
     order_max_edge,
+    pick_start_indices,
+    resolve_anneal_steps,
     resolve_weights,
 )
 
@@ -98,6 +110,25 @@ def test_minimax_refine_reduces_worst_transition():
     optimized = minimax_refine(order, dist, objective_fn=objective, passes=3)
     after = order_max_edge(optimized, dist)
 
+    assert after < before
+
+
+def test_targeted_edge_repair_reduces_total_transition_cost():
+    dist = [
+        [0.0, 0.2, 0.8, 0.9, 0.3],
+        [0.2, 0.0, 0.2, 0.9, 0.4],
+        [0.8, 0.2, 0.0, 1.2, 0.2],
+        [0.9, 0.9, 1.2, 0.0, 0.1],
+        [0.3, 0.4, 0.2, 0.1, 0.0],
+    ]
+    order = [0, 1, 2, 3, 4]
+    objective = lambda value: sum(dist[value[i]][value[i + 1]] for i in range(len(value) - 1))
+
+    before = objective(order)
+    improved = targeted_edge_repair(order, dist, objective_fn=objective, edge_count=2, neighborhood=3)
+    after = objective(improved)
+
+    assert sorted(improved) == [0, 1, 2, 3, 4]
     assert after < before
 
 
@@ -464,3 +495,312 @@ def test_blend_distance_matrix_with_model_influences_scores():
         model_alpha=0.5,
     )
     assert blended[0][1] > 0.2
+
+
+def test_distance_matrix_cache_key_is_stable_and_sensitive_to_inputs():
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.8, 140.0),
+    ]
+    key_a = build_distance_matrix_cache_key(tracks, {"bpm": 0.4, "key": 0.3}, 0.08)
+    key_b = build_distance_matrix_cache_key(tracks, {"key": 0.3, "bpm": 0.4}, 0.08)
+    key_c = build_distance_matrix_cache_key(tracks, {"bpm": 0.5, "key": 0.3}, 0.08)
+
+    assert key_a == key_b
+    assert key_a != key_c
+
+
+def test_build_distance_matrix_cached_returns_cache_hit_on_second_call(monkeypatch):
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.8, 140.0),
+        make_track("c-1", 0.6, 128.0),
+    ]
+    context = FeatureContext(
+        scales={
+            "energy": 0.2,
+            "valence": 0.2,
+            "danceability": 0.2,
+            "loudness": 5.0,
+        }
+    )
+    weights = {"bpm": 0.4, "key": 0.3, "energy": 0.2, "loudness": 0.1}
+
+    monkeypatch.setattr(core, "DIST_MATRIX_CACHE_MAX", 8)
+    monkeypatch.setattr(core, "DIST_MATRIX_CACHE_TTL_SECONDS", 3600)
+    with DIST_MATRIX_CACHE_LOCK:
+        DIST_MATRIX_CACHE.clear()
+
+    dist_first, hit_first = build_distance_matrix_cached(tracks, weights, 0.08, context)
+    dist_second, hit_second = build_distance_matrix_cached(tracks, weights, 0.08, context)
+
+    assert hit_first is False
+    assert hit_second is True
+    assert dist_first == dist_second
+    assert dist_first is not dist_second
+
+
+def test_memoize_order_objective_avoids_duplicate_evaluations():
+    calls = {"count": 0}
+
+    def objective(order):
+        calls["count"] += 1
+        return float(sum(order))
+
+    cached = memoize_order_objective(objective, max_entries=512)
+    order = [0, 2, 1, 3]
+
+    first = cached(order)
+    second = cached(list(order))
+
+    assert first == second
+    assert calls["count"] == 1
+
+
+def test_dedupe_candidate_orders_keeps_first_occurrence_order():
+    deduped = dedupe_candidate_orders(
+        [
+            [0, 1, 2, 3],
+            [0, 1, 2, 3],
+            [1, 0, 2, 3],
+            [1, 0, 2, 3],
+            [2, 3, 1, 0],
+        ]
+    )
+    assert deduped == [[0, 1, 2, 3], [1, 0, 2, 3], [2, 3, 1, 0]]
+
+
+def test_exact_path_order_matches_bruteforce_for_small_graph():
+    dist = [
+        [0.0, 0.2, 0.8, 0.5],
+        [0.2, 0.0, 0.3, 0.9],
+        [0.8, 0.3, 0.0, 0.2],
+        [0.5, 0.9, 0.2, 0.0],
+    ]
+
+    order = exact_path_order(dist)
+    best = min(
+        permutations(range(4)),
+        key=lambda perm: sum(dist[perm[i]][perm[i + 1]] for i in range(3)),
+    )
+
+    expected_cost = sum(dist[best[i]][best[i + 1]] for i in range(3))
+    actual_cost = sum(dist[order[i]][order[i + 1]] for i in range(3))
+    assert sorted(order) == [0, 1, 2, 3]
+    assert actual_cost == expected_cost
+
+
+def test_optimize_order_uses_exact_seed_for_small_instances(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.8, 0.5],
+        [0.2, 0.0, 0.3, 0.9],
+        [0.8, 0.3, 0.0, 0.2],
+        [0.5, 0.9, 0.2, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+    calls = {"count": 0}
+
+    def fake_exact(_dist):
+        calls["count"] += 1
+        return [0, 1, 2, 3]
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 6)
+    monkeypatch.setattr(core, "exact_path_order", fake_exact)
+
+    core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=2,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=0,
+        solver_mode="classic",
+        beam_width=4,
+        anneal_steps=0,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+    )
+
+    assert calls["count"] == 1
+
+
+def test_optimize_order_respects_max_solver_time_budget(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.4, 0.6, 0.3],
+        [0.2, 0.0, 0.25, 0.45, 0.15],
+        [0.4, 0.25, 0.0, 0.2, 0.3],
+        [0.6, 0.45, 0.2, 0.0, 0.35],
+        [0.3, 0.15, 0.3, 0.35, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+        make_track("e-1", 0.6, 140.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 0)
+    calls = {"anneal": 0}
+    original_anneal = core.anneal_refine
+    diagnostics = {}
+
+    def wrapped_anneal(order, objective_fn, rng, steps, temp_start, temp_end):
+        calls["anneal"] += 1
+        import time
+
+        time.sleep(0.01)
+        return original_anneal(order, objective_fn, rng, 0, temp_start, temp_end)
+
+    monkeypatch.setattr(core, "anneal_refine", wrapped_anneal)
+
+    order, _ = core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=8,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=0,
+        solver_mode="hybrid",
+        beam_width=4,
+        anneal_steps=80,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+        max_solver_ms=2,
+        diagnostics=diagnostics,
+    )
+
+    assert sorted(order) == [0, 1, 2, 3, 4]
+    assert calls["anneal"] == 1
+    assert diagnostics["time_budget_hit"] is True
+    assert diagnostics["candidate_processed"] >= 1
+
+
+def test_pick_start_indices_caps_restart_count_to_track_count():
+    dist = [
+        [0.0, 0.2, 0.3],
+        [0.2, 0.0, 0.4],
+        [0.3, 0.4, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+    ]
+    import random
+
+    starts = pick_start_indices(dist, tracks, random.Random(42), restarts=12)
+    assert len(starts) == 3
+    assert sorted(starts) == [0, 1, 2]
+
+
+def test_resolve_anneal_steps_scales_with_track_count():
+    small = resolve_anneal_steps(base_steps=120, track_count=8)
+    medium = resolve_anneal_steps(base_steps=120, track_count=24)
+    large = resolve_anneal_steps(base_steps=120, track_count=120)
+
+    assert small < medium < large
+    assert small >= 10
+
+
+def test_optimize_order_uses_adaptive_anneal_steps(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.4, 0.6, 0.3],
+        [0.2, 0.0, 0.25, 0.45, 0.15],
+        [0.4, 0.25, 0.0, 0.2, 0.3],
+        [0.6, 0.45, 0.2, 0.0, 0.35],
+        [0.3, 0.15, 0.3, 0.35, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+        make_track("e-1", 0.6, 140.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 0)
+    calls: list[int] = []
+
+    def fake_anneal(order, objective_fn, rng, steps, temp_start, temp_end):
+        calls.append(steps)
+        return order
+
+    monkeypatch.setattr(core, "anneal_refine", fake_anneal)
+
+    core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=3,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=0,
+        solver_mode="hybrid",
+        beam_width=4,
+        anneal_steps=120,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+    )
+
+    expected = resolve_anneal_steps(base_steps=120, track_count=len(dist))
+    assert calls
+    assert all(value == expected for value in calls)
+
+
+def test_optimize_order_populates_solver_diagnostics(monkeypatch):
+    dist = [
+        [0.0, 0.2, 0.8, 0.5],
+        [0.2, 0.0, 0.3, 0.9],
+        [0.8, 0.3, 0.0, 0.2],
+        [0.5, 0.9, 0.2, 0.0],
+    ]
+    tracks = [
+        make_track("a-1", 0.2, 100.0),
+        make_track("b-1", 0.3, 110.0),
+        make_track("c-1", 0.4, 120.0),
+        make_track("d-1", 0.5, 130.0),
+    ]
+    objective = lambda order: sum(dist[order[i]][order[i + 1]] for i in range(len(order) - 1))
+
+    monkeypatch.setattr(core, "EXACT_SOLVER_MAX_N", 8)
+    diagnostics: dict = {}
+    order, _ = core.optimize_order(
+        dist=dist,
+        tracks=tracks,
+        restarts=4,
+        seed=42,
+        two_opt_passes=2,
+        objective_fn=objective,
+        flow_profile="peak",
+        energy_targets=None,
+        minimax_passes=1,
+        solver_mode="classic",
+        beam_width=4,
+        anneal_steps=120,
+        anneal_temp_start=0.08,
+        anneal_temp_end=0.004,
+        diagnostics=diagnostics,
+    )
+
+    assert sorted(order) == [0, 1, 2, 3]
+    assert diagnostics["candidate_total"] >= diagnostics["candidate_unique"] >= diagnostics["candidate_processed"]
+    assert diagnostics["used_exact_seed"] is True
+    assert diagnostics["effective_anneal_steps"] > 0
+    assert diagnostics["elapsed_ms"] >= 0.0

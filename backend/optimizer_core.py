@@ -1,11 +1,14 @@
 ﻿
 import json
+import hashlib
 import math
 import os
 import random
 import re
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
@@ -108,6 +111,12 @@ MODEL_FEATURE_KEYS = [
     "tempo_jump",
     "energy_jump",
 ]
+
+DIST_MATRIX_CACHE_MAX = max(0, int(os.getenv("DIST_MATRIX_CACHE_MAX", "16")))
+DIST_MATRIX_CACHE_TTL_SECONDS = max(0, int(os.getenv("DIST_MATRIX_CACHE_TTL_SECONDS", "1800")))
+DIST_MATRIX_CACHE: OrderedDict[str, tuple[float, List[List[float]]]] = OrderedDict()
+DIST_MATRIX_CACHE_LOCK = threading.Lock()
+EXACT_SOLVER_MAX_N = max(0, int(os.getenv("EXACT_SOLVER_MAX_N", "11")))
 
 
 @dataclass
@@ -798,6 +807,73 @@ def blend_distance_matrix_with_model(
     return dist
 
 
+def clone_matrix(dist: List[List[float]]) -> List[List[float]]:
+    return [row[:] for row in dist]
+
+
+def track_cache_signature(track: Track) -> dict:
+    features = track.features or {}
+    return {
+        "id": track.id,
+        "tempo": features.get("tempo"),
+        "key": features.get("key"),
+        "mode": features.get("mode"),
+        "energy": features.get("energy"),
+        "valence": features.get("valence"),
+        "danceability": features.get("danceability"),
+        "loudness": features.get("loudness"),
+        "time_signature": features.get("time_signature"),
+        "duration_ms": track.duration_ms,
+        "explicit": track.explicit,
+    }
+
+
+def build_distance_matrix_cache_key(
+    tracks: List[Track],
+    weights: Dict[str, float],
+    bpm_window: float,
+) -> str:
+    payload = {
+        "bpm_window": round(float(bpm_window), 6),
+        "weights": {key: round(float(value), 6) for key, value in sorted(weights.items())},
+        "tracks": [track_cache_signature(track) for track in tracks],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha1(encoded).hexdigest()
+
+
+def build_distance_matrix_cached(
+    tracks: List[Track],
+    weights: Dict[str, float],
+    bpm_window: float,
+    context: FeatureContext,
+) -> tuple[List[List[float]], bool]:
+    if DIST_MATRIX_CACHE_MAX <= 0 or DIST_MATRIX_CACHE_TTL_SECONDS <= 0:
+        return build_distance_matrix(tracks, weights, bpm_window, context), False
+
+    cache_key = build_distance_matrix_cache_key(tracks, weights, bpm_window)
+    now = time.time()
+
+    with DIST_MATRIX_CACHE_LOCK:
+        cached = DIST_MATRIX_CACHE.get(cache_key)
+        if cached:
+            created_at, matrix = cached
+            if now - created_at <= DIST_MATRIX_CACHE_TTL_SECONDS:
+                DIST_MATRIX_CACHE.move_to_end(cache_key)
+                return clone_matrix(matrix), True
+            DIST_MATRIX_CACHE.pop(cache_key, None)
+
+    dist = build_distance_matrix(tracks, weights, bpm_window, context)
+
+    with DIST_MATRIX_CACHE_LOCK:
+        DIST_MATRIX_CACHE[cache_key] = (now, clone_matrix(dist))
+        DIST_MATRIX_CACHE.move_to_end(cache_key)
+        while len(DIST_MATRIX_CACHE) > DIST_MATRIX_CACHE_MAX:
+            DIST_MATRIX_CACHE.popitem(last=False)
+
+    return dist, False
+
+
 def build_distance_matrix(
     tracks: List[Track],
     weights: Dict[str, float],
@@ -1384,6 +1460,26 @@ def is_better_lexicographic(
     return False
 
 
+def memoize_order_objective(
+    objective_fn: Callable[[List[int]], float],
+    max_entries: int = 20000,
+) -> Callable[[List[int]], float]:
+    cache: Dict[Tuple[int, ...], float] = {}
+
+    def wrapped(order: List[int]) -> float:
+        key = tuple(order)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        value = float(objective_fn(order))
+        if len(cache) >= max(256, max_entries):
+            cache.clear()
+        cache[key] = value
+        return value
+
+    return wrapped
+
+
 def minimax_refine(
     order: List[int],
     dist: List[List[float]],
@@ -1460,10 +1556,60 @@ def minimax_refine(
     return order
 
 
+def targeted_edge_repair(
+    order: List[int],
+    dist: List[List[float]],
+    objective_fn: Callable[[List[int]], float],
+    edge_count: int = 2,
+    neighborhood: int = 4,
+) -> List[int]:
+    n = len(order)
+    if n < 4:
+        return order
+
+    scored_edges = sorted(
+        ((dist[order[i]][order[i + 1]], i) for i in range(len(order) - 1)),
+        reverse=True,
+    )
+    rough_edges = [idx for _, idx in scored_edges[: max(1, edge_count)]]
+
+    best = list(order)
+    best_cost = objective_fn(best)
+
+    for edge_idx in rough_edges:
+        left = max(0, edge_idx - neighborhood)
+        right = min(n - 1, edge_idx + 1 + neighborhood)
+
+        for i in range(left, right):
+            for j in range(i + 2, right + 1):
+                candidate = list(best)
+                candidate[i : j + 1] = reversed(candidate[i : j + 1])
+                cand_cost = objective_fn(candidate)
+                if cand_cost < best_cost - 1e-9:
+                    best = candidate
+                    best_cost = cand_cost
+
+        for a in range(left, right + 1):
+            swap_left = max(0, a - 3)
+            swap_right = min(n - 1, a + 3)
+            for b in range(swap_left, swap_right + 1):
+                if a == b:
+                    continue
+                candidate = list(best)
+                candidate[a], candidate[b] = candidate[b], candidate[a]
+                cand_cost = objective_fn(candidate)
+                if cand_cost < best_cost - 1e-9:
+                    best = candidate
+                    best_cost = cand_cost
+
+    return best
+
+
 def pick_start_indices(dist: List[List[float]], tracks: List[Track], rng: random.Random, restarts: int) -> List[int]:
     n = len(dist)
     if n == 0:
         return []
+    target = min(n, max(1, int(restarts)))
 
     avg_dist = [sum(row) for row in dist]
     medoid = min(range(n), key=lambda i: avg_dist[i])
@@ -1487,7 +1633,7 @@ def pick_start_indices(dist: List[List[float]], tracks: List[Track], rng: random
             add_index(min(energy_pairs, key=lambda x: x[1])[0])
             add_index(max(energy_pairs, key=lambda x: x[1])[0])
 
-    while len(starts) < max(1, restarts):
+    while len(starts) < target:
         idx = rng.randrange(n)
         if idx not in starts:
             starts.append(idx)
@@ -1574,6 +1720,77 @@ def anneal_refine(
 
     return best
 
+
+def resolve_anneal_steps(base_steps: int, track_count: int) -> int:
+    if base_steps <= 0 or track_count <= 0:
+        return 0
+    scale = math.sqrt(max(1.0, track_count) / 24.0)
+    scale = max(0.6, min(2.2, scale))
+    return max(10, int(round(base_steps * scale)))
+
+
+def dedupe_candidate_orders(candidate_orders: List[List[int]]) -> List[List[int]]:
+    seen: set[Tuple[int, ...]] = set()
+    unique: List[List[int]] = []
+    for order in candidate_orders:
+        key = tuple(order)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(order)
+    return unique
+
+
+def exact_path_order(dist: List[List[float]]) -> List[int]:
+    n = len(dist)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0]
+
+    full_mask = (1 << n) - 1
+    dp: Dict[Tuple[int, int], float] = {}
+    parent: Dict[Tuple[int, int], int] = {}
+
+    for start in range(n):
+        key = (1 << start, start)
+        dp[key] = 0.0
+        parent[key] = -1
+
+    for mask in range(1 << n):
+        for end in range(n):
+            state = (mask, end)
+            current = dp.get(state)
+            if current is None:
+                continue
+            remaining = full_mask ^ mask
+            while remaining:
+                bit = remaining & -remaining
+                nxt = bit.bit_length() - 1
+                new_mask = mask | bit
+                new_state = (new_mask, nxt)
+                candidate = current + dist[end][nxt]
+                if candidate < dp.get(new_state, math.inf):
+                    dp[new_state] = candidate
+                    parent[new_state] = end
+                remaining ^= bit
+
+    best_end = min(range(n), key=lambda idx: dp.get((full_mask, idx), math.inf))
+    if not math.isfinite(dp.get((full_mask, best_end), math.inf)):
+        return list(range(n))
+
+    order: List[int] = []
+    mask = full_mask
+    node = best_end
+    while node >= 0:
+        order.append(node)
+        prev = parent.get((mask, node), -1)
+        mask ^= 1 << node
+        node = prev
+    order.reverse()
+    return order
+
+
 def optimize_order(
     dist: List[List[float]],
     tracks: List[Track],
@@ -1590,6 +1807,8 @@ def optimize_order(
     anneal_steps: int = 140,
     anneal_temp_start: float = 0.08,
     anneal_temp_end: float = 0.004,
+    max_solver_ms: Optional[int] = None,
+    diagnostics: Optional[Dict[str, float]] = None,
 ) -> Tuple[List[int], float]:
     n = len(dist)
     if n == 0:
@@ -1600,12 +1819,29 @@ def optimize_order(
     rng = random.Random(seed)
     best_order: Optional[List[int]] = None
     best_cost = math.inf
+    objective_eval = memoize_order_objective(objective_fn)
+    effective_anneal_steps = resolve_anneal_steps(max(0, int(anneal_steps)), n)
+    started_at = time.perf_counter()
+    anneal_runs = 0
+    processed_candidates = 0
+    time_budget_hit = False
+    used_exact_seed = False
+    deadline: Optional[float] = None
+    if max_solver_ms is not None and max_solver_ms > 0:
+        deadline = time.perf_counter() + (float(max_solver_ms) / 1000.0)
+
+    def time_budget_exceeded() -> bool:
+        return deadline is not None and time.perf_counter() >= deadline
 
     starts = pick_start_indices(dist, tracks, rng, restarts)
 
     candidate_orders: List[List[int]] = []
     for idx, start in enumerate(starts):
         candidate_orders.append(nearest_neighbor(dist, start, rng if idx > 0 else None, k=4))
+
+    if EXACT_SOLVER_MAX_N > 1 and n <= EXACT_SOLVER_MAX_N:
+        candidate_orders.append(exact_path_order(dist))
+        used_exact_seed = True
 
     if solver_mode == "hybrid":
         beam_starts = starts[: max(2, min(5, beam_width))]
@@ -1626,32 +1862,62 @@ def optimize_order(
         if energy_seed:
             candidate_orders.append(energy_seed)
 
-    for order in candidate_orders:
+    unique_orders = dedupe_candidate_orders(candidate_orders)
+    for order in unique_orders:
+        if time_budget_exceeded() and best_order is not None:
+            time_budget_hit = True
+            break
+
         working = list(order)
-        if solver_mode == "hybrid":
+        if solver_mode == "hybrid" and not time_budget_exceeded():
+            anneal_runs += 1
             working = anneal_refine(
                 working,
-                objective_fn=objective_fn,
+                objective_fn=objective_eval,
                 rng=rng,
-                steps=max(0, anneal_steps),
+                steps=effective_anneal_steps,
                 temp_start=max(1e-6, anneal_temp_start),
                 temp_end=max(1e-6, anneal_temp_end),
             )
 
-        working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_fn)
+        if not time_budget_exceeded():
+            working = local_search(working, dist, two_opt_passes=two_opt_passes, objective_fn=objective_eval)
 
-        if minimax_passes > 0:
-            working = minimax_refine(working, dist, objective_fn=objective_fn, passes=minimax_passes)
-            working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_fn)
+        if minimax_passes > 0 and not time_budget_exceeded():
+            working = minimax_refine(working, dist, objective_fn=objective_eval, passes=minimax_passes)
+            if not time_budget_exceeded():
+                working = local_search(working, dist, two_opt_passes=1, objective_fn=objective_eval)
+                working = targeted_edge_repair(
+                    working,
+                    dist,
+                    objective_fn=objective_eval,
+                    edge_count=max(1, min(3, minimax_passes)),
+                    neighborhood=4,
+                )
 
-        cost = objective_fn(working)
+        cost = objective_eval(working)
         if cost < best_cost:
             best_cost = cost
             best_order = list(working)
+        processed_candidates += 1
 
     if best_order is None:
         best_order = list(range(n))
-        best_cost = objective_fn(best_order)
+        best_cost = objective_eval(best_order)
+
+    if diagnostics is not None:
+        diagnostics.update(
+            {
+                "candidate_total": len(candidate_orders),
+                "candidate_unique": len(unique_orders),
+                "candidate_processed": processed_candidates,
+                "anneal_runs": anneal_runs,
+                "effective_anneal_steps": effective_anneal_steps,
+                "time_budget_hit": bool(time_budget_hit),
+                "used_exact_seed": bool(used_exact_seed),
+                "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 3),
+            }
+        )
 
     return best_order, best_cost
 
@@ -2017,6 +2283,7 @@ def optimize_tracks(
     anneal_steps: int = 140,
     anneal_temp_start: float = 0.08,
     anneal_temp_end: float = 0.004,
+    max_solver_ms: Optional[int] = None,
     lookahead_horizon: int = 3,
     lookahead_decay: float = 0.6,
     model_weights: Optional[Dict[str, float]] = None,
@@ -2024,7 +2291,7 @@ def optimize_tracks(
     model_alpha: float = 0.0,
     model_version: Optional[str] = None,
     transition_log_path: Optional[str] = None,
-) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
+) -> Tuple[str, List[Track], float, List[Dict], List[Dict], Dict[str, object]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
     if not tracks:
         raise RuntimeError("No playable tracks found in playlist.")
@@ -2047,7 +2314,7 @@ def optimize_tracks(
     resolved_weights = resolve_weights(weights, mix_mode)
     resolved_weights = apply_weight_offsets(resolved_weights, feedback_offsets)
     context = build_feature_context(with_features)
-    dist = build_distance_matrix(with_features, resolved_weights, bpm_window, context)
+    dist, distance_cache_hit = build_distance_matrix_cached(with_features, resolved_weights, bpm_window, context)
     dist = blend_distance_matrix_with_model(
         dist,
         with_features,
@@ -2117,6 +2384,10 @@ def optimize_tracks(
         tempo_unit_values,
         config,
     )
+    solver_diagnostics: Dict[str, object] = {
+        "distance_cache_hit": bool(distance_cache_hit),
+        "model_blend_alpha": round(clamp01(float(model_alpha)), 4),
+    }
 
     order, cost = optimize_order(
         dist=dist,
@@ -2134,6 +2405,8 @@ def optimize_tracks(
         anneal_steps=max(0, int(anneal_steps)),
         anneal_temp_start=max(1e-6, float(anneal_temp_start)),
         anneal_temp_end=max(1e-6, float(anneal_temp_end)),
+        max_solver_ms=max(0, int(max_solver_ms)) if max_solver_ms is not None else None,
+        diagnostics=solver_diagnostics,
     )
 
     order = apply_fixed_endpoints(
@@ -2148,6 +2421,10 @@ def optimize_tracks(
     ordered_tracks = [with_features[i] for i in order]
     if missing == "append" and missing_tracks:
         ordered_tracks.extend(missing_tracks)
+    solver_diagnostics["optimized_track_count"] = len(with_features)
+    solver_diagnostics["missing_track_count"] = len(missing_tracks)
+    solver_diagnostics["output_track_count"] = len(ordered_tracks)
+    solver_diagnostics["used_model_version"] = model_version
 
     roughest = summarize_transitions(with_features, dist, order, limit=5)
     explainability = build_transition_explainability(
@@ -2172,4 +2449,4 @@ def optimize_tracks(
         bpm_window=bpm_window,
     )
 
-    return playlist_name, ordered_tracks, cost, roughest, explainability
+    return playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics

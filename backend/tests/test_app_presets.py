@@ -23,8 +23,13 @@ from backend.app import (
     STORE,
     OptimizeRequest,
     apply_builtin_preset,
+    build_optimize_config_hash,
     execute_transition_training,
     edge_score_diff,
+    normalize_optimize_payload,
+    run_optimize_tracks_for_payload,
+    run_single_optimization,
+    resolve_optimize_payload,
     transition_summary,
     validate_optimize_payload,
 )
@@ -78,6 +83,24 @@ def clear_feedback_data(prefix: str) -> None:
             FEEDBACK_STORE.pop(feedback_id, None)
 
 
+def test_background_services_start_and_stop_scheduler_thread(monkeypatch):
+    def fake_scheduler_loop():
+        while not app_module.SCHEDULER_STOP.is_set():
+            app_module.SCHEDULER_STOP.wait(0.01)
+
+    monkeypatch.setattr(app_module, "scheduler_loop", fake_scheduler_loop)
+    app_module.stop_background_services(timeout_seconds=0.2)
+    app_module.start_background_services()
+
+    thread = getattr(app.state, "scheduler_thread", None)
+    assert thread is not None
+    assert thread.is_alive()
+
+    app_module.stop_background_services(timeout_seconds=0.5)
+    assert getattr(app.state, "scheduler_thread", None) is None
+    assert app_module.SCHEDULER_STOP.is_set()
+
+
 def test_apply_builtin_preset_populates_profile_defaults():
     payload = OptimizeRequest(playlist="abc123", preset_id="warmup")
     resolved = apply_builtin_preset(payload)
@@ -100,6 +123,57 @@ def test_apply_builtin_preset_keeps_explicit_overrides():
 
     assert resolved.flow_profile == "cooldown"
     assert resolved.minimax_passes == 1
+
+
+def test_normalize_optimize_payload_sorts_guardrails_and_curve_points():
+    payload = OptimizeRequest(
+        playlist="abc123",
+        bpm_guardrails=[128, 110, 128, 0],
+        mood_curve_points=[
+            {"position": 0.8, "energy": 0.5},
+            {"position": 0.2, "energy": 0.4},
+        ],
+    )
+    normalized = normalize_optimize_payload(payload)
+
+    assert normalized.bpm_guardrails == [110.0, 128.0]
+    assert [point.position for point in (normalized.mood_curve_points or [])] == [0.2, 0.8]
+
+
+def test_build_optimize_config_hash_is_stable_for_equivalent_payloads():
+    left = OptimizeRequest(
+        playlist="abc123",
+        name="mix A",
+        bpm_guardrails=[128, 110],
+        mood_curve_points=[
+            {"position": 0.8, "energy": 0.5},
+            {"position": 0.2, "energy": 0.4},
+        ],
+    )
+    right = OptimizeRequest(
+        playlist="abc123",
+        name="mix B",
+        bpm_guardrails=[110, 128],
+        mood_curve_points=[
+            {"position": 0.2, "energy": 0.4},
+            {"position": 0.8, "energy": 0.5},
+        ],
+    )
+
+    assert build_optimize_config_hash(left) == build_optimize_config_hash(right)
+
+
+def test_resolve_optimize_payload_applies_preset_and_normalization():
+    payload = OptimizeRequest(
+        playlist="abc123",
+        preset_id="warmup",
+        bpm_guardrails=[130, 115],
+    )
+    resolved = resolve_optimize_payload(payload)
+
+    assert resolved.flow_curve is True
+    assert resolved.flow_profile == "gentle"
+    assert resolved.bpm_guardrails == [115.0, 130.0]
 
 
 def test_apply_builtin_preset_rejects_unknown_preset():
@@ -144,6 +218,93 @@ def test_validate_optimize_payload_rejects_invalid_anneal_temps():
     )
     with pytest.raises(HTTPException):
         validate_optimize_payload(payload)
+
+
+def test_run_optimize_tracks_for_payload_uses_default_solver_budget(monkeypatch):
+    captured: dict = {}
+
+    def fake_optimize_tracks(**kwargs):
+        captured.update(kwargs)
+        return "Playlist", [], 0.0, [], [], {"elapsed_ms": 1.0}
+
+    monkeypatch.setattr(app_module, "DEFAULT_MAX_SOLVER_MS", 4200)
+    monkeypatch.setattr(app_module, "optimize_tracks", fake_optimize_tracks)
+
+    payload = OptimizeRequest(playlist="abc123")
+    run_optimize_tracks_for_payload(
+        sp=object(),
+        payload=payload,
+        seed=42,
+        feedback_offsets={},
+        model_payload={},
+        cache_path="cache/audio_features.json",
+    )
+
+    assert captured.get("max_solver_ms") == 4200
+
+
+def test_run_single_optimization_includes_solver_diagnostics_when_debug_enabled(monkeypatch):
+    run_id = f"diag-{uuid.uuid4().hex[:8]}"
+    solver_diag = {"anneal_runs": 2, "elapsed_ms": 12.3}
+
+    monkeypatch.setattr(app_module, "OPTIMIZE_DIAGNOSTICS_DEBUG", True)
+    monkeypatch.setattr(app_module, "owner_feedback_offsets", lambda owner_id: {})
+    monkeypatch.setattr(app_module, "active_model_payload", lambda: {"version": None, "alpha": 0.0})
+    monkeypatch.setattr(app_module, "fetch_playlist_track_ids", lambda sp, playlist_id: ["t1", "t2"])
+    monkeypatch.setattr(app_module, "create_playlist_with_items", lambda **kwargs: "playlist123")
+    monkeypatch.setattr(
+        app_module,
+        "run_optimize_tracks_for_payload",
+        lambda **kwargs: ("abc123", "My Playlist", [], 0.123, [], [], solver_diag),
+    )
+
+    response = run_single_optimization(
+        sp=object(),
+        owner_id="tester",
+        payload=OptimizeRequest(playlist="abc123"),
+        seed=42,
+        run_id=run_id,
+    )
+
+    assert response["solver_diagnostics"] == solver_diag
+    assert RUN_HISTORY[run_id]["solver_diagnostics"] == solver_diag
+
+    snapshot_id = RUN_HISTORY[run_id].get("snapshot_id")
+    RUN_HISTORY.pop(run_id, None)
+    if snapshot_id:
+        app_module.SNAPSHOT_STORE.pop(snapshot_id, None)
+
+
+def test_run_single_optimization_hides_solver_diagnostics_when_debug_disabled(monkeypatch):
+    run_id = f"diag-{uuid.uuid4().hex[:8]}"
+    solver_diag = {"anneal_runs": 2, "elapsed_ms": 12.3}
+
+    monkeypatch.setattr(app_module, "OPTIMIZE_DIAGNOSTICS_DEBUG", False)
+    monkeypatch.setattr(app_module, "owner_feedback_offsets", lambda owner_id: {})
+    monkeypatch.setattr(app_module, "active_model_payload", lambda: {"version": None, "alpha": 0.0})
+    monkeypatch.setattr(app_module, "fetch_playlist_track_ids", lambda sp, playlist_id: ["t1", "t2"])
+    monkeypatch.setattr(app_module, "create_playlist_with_items", lambda **kwargs: "playlist123")
+    monkeypatch.setattr(
+        app_module,
+        "run_optimize_tracks_for_payload",
+        lambda **kwargs: ("abc123", "My Playlist", [], 0.123, [], [], solver_diag),
+    )
+
+    response = run_single_optimization(
+        sp=object(),
+        owner_id="tester",
+        payload=OptimizeRequest(playlist="abc123"),
+        seed=42,
+        run_id=run_id,
+    )
+
+    assert "solver_diagnostics" not in response
+    assert RUN_HISTORY[run_id]["solver_diagnostics"] == solver_diag
+
+    snapshot_id = RUN_HISTORY[run_id].get("snapshot_id")
+    RUN_HISTORY.pop(run_id, None)
+    if snapshot_id:
+        app_module.SNAPSHOT_STORE.pop(snapshot_id, None)
 
 
 def test_model_status_endpoint_requires_authentication(monkeypatch):

@@ -1,0 +1,10 @@
+{
+  "playlist": "spotify:playlist:YOUR_PLAYLIST_ID",
+  "public": false,
+  "mix_mode": "balanced",
+  "flow_curve": true,
+  "flow_profile": "peak",
+  "solver_mode": "hybrid",
+  "restarts": 10,
+  "two_opt_passes": 2
+}
