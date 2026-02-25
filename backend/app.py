@@ -104,6 +104,11 @@ class QuickFixRequest(BaseModel):
     public: Optional[bool] = None
 
 
+class CompareRequest(BaseModel):
+    baseline_run_id: str
+    candidate_run_id: str
+
+
 def setup_logging() -> logging.Logger:
     logger = logging.getLogger("spotify_optimizer")
     logger.setLevel(LOG_LEVEL)
@@ -122,6 +127,7 @@ def setup_logging() -> logging.Logger:
 
 LOGGER = setup_logging()
 RUN_HISTORY: dict[str, dict] = {}
+COMPARISON_HISTORY: dict[str, dict] = {}
 
 rate_limit_storage = os.getenv("RATE_LIMIT_REDIS_URL") or os.getenv("REDIS_URL") or "memory://"
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_GLOBAL], storage_uri=rate_limit_storage)
@@ -596,6 +602,59 @@ def run_transitions(run_id: str):
         "transition_score": run.get("transition_score"),
         "transitions": run.get("transitions", []),
     }
+
+
+def run_summary_metrics(run: dict) -> dict:
+    transitions = run.get("transitions", [])
+    scores = [float(item.get("score", 0.0)) for item in transitions]
+    if not scores:
+        return {"mean_edge_score": 0.0, "max_edge_score": 0.0, "edge_count": 0}
+    return {
+        "mean_edge_score": round(sum(scores) / len(scores), 6),
+        "max_edge_score": round(max(scores), 6),
+        "edge_count": len(scores),
+    }
+
+
+@app.post("/compare")
+def compare_runs(payload: CompareRequest):
+    baseline = RUN_HISTORY.get(payload.baseline_run_id)
+    candidate = RUN_HISTORY.get(payload.candidate_run_id)
+    if not baseline or not candidate:
+        raise HTTPException(status_code=404, detail="one or both runs not found")
+
+    baseline_metrics = run_summary_metrics(baseline)
+    candidate_metrics = run_summary_metrics(candidate)
+    delta = {
+        "mean_edge_score_delta": round(
+            candidate_metrics["mean_edge_score"] - baseline_metrics["mean_edge_score"], 6
+        ),
+        "max_edge_score_delta": round(
+            candidate_metrics["max_edge_score"] - baseline_metrics["max_edge_score"], 6
+        ),
+        "transition_score_delta": round(
+            float(candidate.get("transition_score", 0.0)) - float(baseline.get("transition_score", 0.0)),
+            6,
+        ),
+    }
+    comparison_id = uuid.uuid4().hex
+    COMPARISON_HISTORY[comparison_id] = {
+        "baseline_run_id": payload.baseline_run_id,
+        "candidate_run_id": payload.candidate_run_id,
+        "baseline_metrics": baseline_metrics,
+        "candidate_metrics": candidate_metrics,
+        "delta": delta,
+        "created_at": time.time(),
+    }
+    return {"comparison_id": comparison_id, **COMPARISON_HISTORY[comparison_id]}
+
+
+@app.get("/compare/{comparison_id}")
+def get_comparison(comparison_id: str):
+    comparison = COMPARISON_HISTORY.get(comparison_id)
+    if not comparison:
+        raise HTTPException(status_code=404, detail="comparison not found")
+    return {"comparison_id": comparison_id, **comparison}
 
 
 @app.post("/optimize/{run_id}/quick-fix", response_model=OptimizeResponse)
