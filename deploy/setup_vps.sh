@@ -23,7 +23,7 @@ APP_DOMAIN="${APP_SUBDOMAIN}.${DOMAIN_BASE}"
 API_DOMAIN="${API_SUBDOMAIN}.${DOMAIN_BASE}"
 
 sudo apt update
-sudo apt install -y nginx redis-server git python3-venv python3-pip curl certbot python3-certbot-nginx
+sudo apt install -y nginx redis-server git python3-venv python3-pip curl certbot python3-certbot-nginx prometheus
 
 curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
 sudo apt install -y nodejs
@@ -55,14 +55,17 @@ sudo chown -R "$RUN_USER":"$RUN_USER" \
 
 sudo cp "$APP_DIR/deploy/systemd/spotify-backend.service" /etc/systemd/system/spotify-backend.service
 sudo cp "$APP_DIR/deploy/systemd/spotify-frontend.service" /etc/systemd/system/spotify-frontend.service
+sudo cp "$APP_DIR/deploy/systemd/prometheus.service" /etc/systemd/system/prometheus.service
 
 sudo sed -i "s|/opt/spotify-optimizer|$APP_DIR|g" /etc/systemd/system/spotify-backend.service
 sudo sed -i "s|/opt/spotify-optimizer|$APP_DIR|g" /etc/systemd/system/spotify-frontend.service
+sudo sed -i "s|/opt/spotify-optimizer|$APP_DIR|g" /etc/systemd/system/prometheus.service
 sudo sed -i "s|www-data|$RUN_USER|g" /etc/systemd/system/spotify-backend.service
 sudo sed -i "s|www-data|$RUN_USER|g" /etc/systemd/system/spotify-frontend.service
 
+sudo systemctl disable --now prometheus || true
 sudo systemctl daemon-reload
-sudo systemctl enable --now spotify-backend spotify-frontend
+sudo systemctl enable --now spotify-backend spotify-frontend prometheus
 
 sudo cp "$APP_DIR/deploy/nginx/spotify-optimizer.conf" /etc/nginx/sites-available/spotify-optimizer
 sudo sed -i "s|app.example.com|$APP_DOMAIN|g" /etc/nginx/sites-available/spotify-optimizer

@@ -32,6 +32,7 @@ NEXT_PUBLIC_API_BASE_URL=https://api.your-domain.com
 - Builds the frontend
 - Installs backend dependencies
 - Installs systemd services
+- Installs and configures Prometheus service
 - Configures Nginx
 - Obtains TLS certs via certbot
 
