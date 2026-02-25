@@ -2291,7 +2291,7 @@ def optimize_tracks(
     model_alpha: float = 0.0,
     model_version: Optional[str] = None,
     transition_log_path: Optional[str] = None,
-) -> Tuple[str, List[Track], float, List[Dict], List[Dict]]:
+) -> Tuple[str, List[Track], float, List[Dict], List[Dict], Dict[str, object]]:
     playlist_name, tracks = fetch_playlist_tracks(sp, playlist_id)
     if not tracks:
         raise RuntimeError("No playable tracks found in playlist.")
@@ -2314,7 +2314,7 @@ def optimize_tracks(
     resolved_weights = resolve_weights(weights, mix_mode)
     resolved_weights = apply_weight_offsets(resolved_weights, feedback_offsets)
     context = build_feature_context(with_features)
-    dist, _ = build_distance_matrix_cached(with_features, resolved_weights, bpm_window, context)
+    dist, distance_cache_hit = build_distance_matrix_cached(with_features, resolved_weights, bpm_window, context)
     dist = blend_distance_matrix_with_model(
         dist,
         with_features,
@@ -2384,6 +2384,10 @@ def optimize_tracks(
         tempo_unit_values,
         config,
     )
+    solver_diagnostics: Dict[str, object] = {
+        "distance_cache_hit": bool(distance_cache_hit),
+        "model_blend_alpha": round(clamp01(float(model_alpha)), 4),
+    }
 
     order, cost = optimize_order(
         dist=dist,
@@ -2402,6 +2406,7 @@ def optimize_tracks(
         anneal_temp_start=max(1e-6, float(anneal_temp_start)),
         anneal_temp_end=max(1e-6, float(anneal_temp_end)),
         max_solver_ms=max(0, int(max_solver_ms)) if max_solver_ms is not None else None,
+        diagnostics=solver_diagnostics,
     )
 
     order = apply_fixed_endpoints(
@@ -2416,6 +2421,10 @@ def optimize_tracks(
     ordered_tracks = [with_features[i] for i in order]
     if missing == "append" and missing_tracks:
         ordered_tracks.extend(missing_tracks)
+    solver_diagnostics["optimized_track_count"] = len(with_features)
+    solver_diagnostics["missing_track_count"] = len(missing_tracks)
+    solver_diagnostics["output_track_count"] = len(ordered_tracks)
+    solver_diagnostics["used_model_version"] = model_version
 
     roughest = summarize_transitions(with_features, dist, order, limit=5)
     explainability = build_transition_explainability(
@@ -2440,4 +2449,4 @@ def optimize_tracks(
         bpm_window=bpm_window,
     )
 
-    return playlist_name, ordered_tracks, cost, roughest, explainability
+    return playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics

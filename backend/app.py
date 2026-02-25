@@ -148,6 +148,7 @@ class OptimizeResponse(BaseModel):
     transition_score: float
     roughest: list
     model_version: Optional[str] = None
+    solver_diagnostics: Optional[dict] = None
 
 
 class QuickFixRequest(BaseModel):
@@ -2041,11 +2042,11 @@ def run_optimize_tracks_for_payload(
     model_payload: dict[str, object],
     cache_path: str,
     source_playlist_id: Optional[str] = None,
-) -> tuple[str, str, list, float, list[dict], list[dict]]:
+) -> tuple[str, str, list, float, list[dict], list[dict], dict]:
     source_playlist_id = source_playlist_id or parse_playlist_id(payload.playlist)
     weights = payload.weights.model_dump() if payload.weights else {}
 
-    playlist_name, ordered_tracks, cost, roughest, explainability = optimize_tracks(
+    playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics = optimize_tracks(
         sp=sp,
         playlist_id=source_playlist_id,
         cache_path=cache_path,
@@ -2093,7 +2094,7 @@ def run_optimize_tracks_for_payload(
         model_version=model_payload.get("version"),
         transition_log_path=TRANSITION_LOG_PATH,
     )
-    return source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability
+    return source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics
 
 
 def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchRequest, batch_source: str) -> tuple[str, dict]:
@@ -2110,7 +2111,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
             cfg.pop("playlist", None)
             cfg_payload = OptimizeRequest(playlist=playlist, **cfg)
             cfg_payload = resolve_optimize_payload(cfg_payload)
-            source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
+            source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics = run_optimize_tracks_for_payload(
                 sp=sp,
                 payload=cfg_payload,
                 seed=44 + index,
@@ -2147,6 +2148,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                 "batch_id": batch_id,
                 "model_version": model_payload.get("version"),
                 "model_alpha": model_payload.get("alpha"),
+                "solver_diagnostics": solver_diagnostics,
                 "created_at": time.time(),
             }
             items.append(
@@ -2161,6 +2163,7 @@ def run_batch_optimization(sp: spotipy.Spotify, owner_id: str, payload: BatchReq
                     "transition_score": round(cost, 4),
                     "model_version": model_payload.get("version"),
                     "config_hash": config_hash,
+                    "solver_diagnostics": solver_diagnostics,
                 }
             )
         except Exception as exc:
@@ -2220,7 +2223,7 @@ def run_single_optimization(
     source_track_ids = fetch_playlist_track_ids(sp, source_playlist_id)
     emit_run_event(run_id, "ingest", 15, "Fetched playlist tracks", {"count": len(source_track_ids)})
 
-    source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
+    source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics = run_optimize_tracks_for_payload(
         sp=sp,
         payload=payload,
         seed=seed,
@@ -2269,6 +2272,7 @@ def run_single_optimization(
         "parent_run_id": parent_run_id,
         "model_version": model_payload.get("version"),
         "model_alpha": model_payload.get("alpha"),
+        "solver_diagnostics": solver_diagnostics,
         "created_at": time.time(),
     }
 
@@ -2281,6 +2285,7 @@ def run_single_optimization(
         "transition_score": round(cost, 4),
         "roughest": roughest,
         "model_version": model_payload.get("version"),
+        "solver_diagnostics": solver_diagnostics,
     }
     if OPTIMIZE_CONFIG_HASH_DEBUG:
         response_payload["config_hash"] = config_hash
@@ -2603,7 +2608,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
     feedback_offsets = owner_feedback_offsets(owner_id)
     model_payload = active_model_payload()
     cache_path = os.path.join(os.path.dirname(__file__), "cache", "audio_features.json")
-    source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability = run_optimize_tracks_for_payload(
+    source_playlist_id, playlist_name, ordered_tracks, cost, roughest, explainability, solver_diagnostics = run_optimize_tracks_for_payload(
         sp=sp,
         payload=replay,
         seed=43,
@@ -2637,6 +2642,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "parent_run_id": run_id,
         "model_version": model_payload.get("version"),
         "model_alpha": model_payload.get("alpha"),
+        "solver_diagnostics": solver_diagnostics,
         "created_at": time.time(),
     }
 
@@ -2648,6 +2654,7 @@ def quick_fix_optimize(request: Request, run_id: str, payload: QuickFixRequest):
         "transition_score": round(cost, 4),
         "roughest": roughest,
         "model_version": model_payload.get("version"),
+        "solver_diagnostics": solver_diagnostics,
     }
     if OPTIMIZE_CONFIG_HASH_DEBUG:
         response_payload["config_hash"] = config_hash
