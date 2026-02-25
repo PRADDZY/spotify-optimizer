@@ -116,6 +116,7 @@ Backend: `http://localhost:8000`
 - Active model blending is controlled by `MODEL_BLEND_ALPHA`; artifacts are stored under `MODEL_DIR`.
 - Model activation is gated by quality thresholds (`MODEL_MIN_ACCURACY`, `MODEL_MAX_LOSS`) using holdout validation metrics when available.
 - Optional promotion guardrails (`MODEL_MIN_ACCURACY_DELTA`, `MODEL_MAX_LOSS_DELTA`) prevent automatic/manual promotion when a candidate regresses vs the active model.
+- `GET /model/evaluation` summarizes recent labeled feedback by model version (including heuristic runs) for monitoring; default lookback is `MODEL_EVAL_WINDOW_DAYS`.
 - `/model/*` endpoints are locked down and require an authenticated model-admin user; set `MODEL_ADMIN_USER_IDS` in production.
 - Model endpoints use dedicated rate limits (`RATE_LIMIT_MODEL_STATUS`, `RATE_LIMIT_MODEL_WRITE`) in addition to global limits.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.

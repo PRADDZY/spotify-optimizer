@@ -13,9 +13,11 @@ os.environ.setdefault("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
 import backend.app as app_module
 from backend.app import (
     BUILTIN_PRESETS,
+    FEEDBACK_STORE,
     MODEL_REGISTRY,
     MODEL_STATE,
     MODEL_DIR,
+    RUN_HISTORY,
     app,
     SESSION_COOKIE,
     STORE,
@@ -65,6 +67,15 @@ def clear_model_state() -> None:
         MODEL_REGISTRY.pop(version, None)
     MODEL_STATE.pop("active_version", None)
     MODEL_STATE.pop("last_auto_train_at", None)
+
+
+def clear_feedback_data(prefix: str) -> None:
+    for run_id, _ in list(RUN_HISTORY.items()):
+        if run_id.startswith(prefix):
+            RUN_HISTORY.pop(run_id, None)
+    for feedback_id, _ in list(FEEDBACK_STORE.items()):
+        if feedback_id.startswith(prefix):
+            FEEDBACK_STORE.pop(feedback_id, None)
 
 
 def test_apply_builtin_preset_populates_profile_defaults():
@@ -159,6 +170,91 @@ def test_model_status_endpoint_returns_expected_shape_for_admin(monkeypatch):
     assert "available_versions" in payload
     assert "quality_gate_thresholds" in payload
     assert "promotion_thresholds" in payload
+
+
+def test_model_evaluation_endpoint_requires_admin_role(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    client = make_authenticated_client("normal-user")
+    response = client.get("/model/evaluation")
+    assert response.status_code == 403
+
+
+def test_model_evaluation_endpoint_rejects_invalid_days(monkeypatch):
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+    client = make_authenticated_client("admin-user")
+    response = client.get("/model/evaluation?days=0")
+    assert response.status_code == 400
+
+
+def test_model_evaluation_endpoint_returns_version_breakdown(monkeypatch):
+    clear_model_state()
+    prefix = f"eval-{uuid.uuid4().hex[:8]}"
+    clear_feedback_data(prefix)
+    monkeypatch.setattr(app_module, "MODEL_ADMIN_USER_IDS", {"admin-user"})
+
+    active_version = f"transition_eval_{uuid.uuid4().hex[:8]}"
+    MODEL_STATE["active_version"] = active_version
+    MODEL_REGISTRY[active_version] = {
+        "artifact_path": "",
+        "owner_scope": "all",
+        "metrics": {"accuracy": 0.7, "loss": 0.4},
+        "validation_metrics": {"accuracy": 0.74, "loss": 0.35},
+        "sample_count": 90,
+        "created_at": time.time(),
+    }
+
+    run_id_active = f"{prefix}-run-active"
+    RUN_HISTORY[run_id_active] = {
+        "model_version": active_version,
+        "transitions": [
+            {"reason_code": "tempo_mismatch"},
+            {"reason_code": "harmonic_mismatch"},
+        ],
+        "created_at": time.time(),
+    }
+    FEEDBACK_STORE[f"{prefix}-fb-1"] = {
+        "run_id": run_id_active,
+        "edge_index": 0,
+        "rating": -2,
+        "owner_id": "tester",
+        "created_at": time.time(),
+    }
+    FEEDBACK_STORE[f"{prefix}-fb-2"] = {
+        "run_id": run_id_active,
+        "edge_index": 1,
+        "rating": 2,
+        "owner_id": "tester",
+        "created_at": time.time(),
+    }
+
+    run_id_heuristic = f"{prefix}-run-heuristic"
+    RUN_HISTORY[run_id_heuristic] = {
+        "model_version": None,
+        "transitions": [{"reason_code": "energy_shift"}],
+        "created_at": time.time(),
+    }
+    FEEDBACK_STORE[f"{prefix}-fb-3"] = {
+        "run_id": run_id_heuristic,
+        "edge_index": 0,
+        "rating": -1,
+        "owner_id": "tester",
+        "created_at": time.time(),
+    }
+
+    client = make_authenticated_client("admin-user")
+    response = client.get("/model/evaluation?days=30")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_version"] == active_version
+
+    versions_by_id = {item["version"]: item for item in payload["versions"]}
+    assert versions_by_id[active_version]["sample_count"] == 2
+    assert versions_by_id[active_version]["rough_rate"] == 0.5
+    assert versions_by_id["heuristic"]["sample_count"] == 1
+    assert payload["active_metrics"]["version"] == active_version
+
+    clear_feedback_data(prefix)
+    clear_model_state()
 
 
 def test_model_train_endpoint_returns_graceful_response_when_data_is_small(monkeypatch):

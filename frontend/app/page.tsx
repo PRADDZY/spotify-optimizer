@@ -111,6 +111,28 @@ type ModelTrainingJob = {
   error?: string | null;
 };
 
+type ModelEvaluationReason = {
+  reason_code: string;
+  count: number;
+};
+
+type ModelEvaluationVersion = {
+  version: string;
+  sample_count: number;
+  positive_ratio: number;
+  rough_rate: number;
+  mean_rating: number;
+  dominant_reason_codes: ModelEvaluationReason[];
+};
+
+type ModelEvaluation = {
+  window_days: number;
+  total_labeled_feedback: number;
+  active_version: string | null;
+  active_metrics: ModelEvaluationVersion | null;
+  versions: ModelEvaluationVersion[];
+};
+
 type Profile = {
   id: string;
   display_name: string;
@@ -251,6 +273,7 @@ export default function HomePage() {
   const [compareError, setCompareError] = useState("");
   const [isComparing, setIsComparing] = useState(false);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
+  const [modelEvaluation, setModelEvaluation] = useState<ModelEvaluation | null>(null);
   const [modelTrainingJob, setModelTrainingJob] = useState<ModelTrainingJob | null>(null);
   const [modelMessage, setModelMessage] = useState("");
   const [isTrainingModel, setIsTrainingModel] = useState(false);
@@ -301,6 +324,22 @@ export default function HomePage() {
       .catch(() => undefined);
     return () => controller.abort();
   }, [apiBase, result?.run_id]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${apiBase}/model/evaluation`, {
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (payload) {
+          setModelEvaluation(payload as ModelEvaluation);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [apiBase, result?.run_id, modelStatus?.active_version]);
 
   useEffect(() => {
     if (!result?.run_id) {
@@ -1236,6 +1275,26 @@ export default function HomePage() {
                   : "n/a"}
               </div>
             </div>
+            {modelEvaluation && (
+              <div className="list" style={{ marginTop: 12 }}>
+                <div className="list-item">
+                  Feedback window: {modelEvaluation.window_days}d | labeled edges:{" "}
+                  {modelEvaluation.total_labeled_feedback}
+                </div>
+                {modelEvaluation.active_metrics && (
+                  <div className="list-item">
+                    Active feedback stats: rough {modelEvaluation.active_metrics.rough_rate.toFixed(2)} |
+                    mean rating {modelEvaluation.active_metrics.mean_rating.toFixed(2)}
+                  </div>
+                )}
+                {modelEvaluation.versions.slice(0, 3).map((item) => (
+                  <div className="list-item" key={`model-eval-${item.version}`}>
+                    {item.version}: {item.sample_count} labels | rough {item.rough_rate.toFixed(2)} |
+                    positive {item.positive_ratio.toFixed(2)}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="button-row" style={{ marginTop: 12 }}>
               <button
                 type="button"
