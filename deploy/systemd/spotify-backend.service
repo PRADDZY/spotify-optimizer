@@ -4,7 +4,7 @@ After=network.target redis-server.service
 
 [Service]
 User=www-data
-WorkingDirectory=/opt/spotify-optimizer/backend
+WorkingDirectory=/opt/spotify-optimizer
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/spotify-optimizer/backend/.env
 ExecStart=/opt/spotify-optimizer/backend/.venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8000
@@ -15,7 +15,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/opt/spotify-optimizer/backend/backend/data /opt/spotify-optimizer/backend/backend/cache /opt/spotify-optimizer/backend/backend/logs
+ReadWritePaths=/opt/spotify-optimizer/backend/data /opt/spotify-optimizer/backend/cache /opt/spotify-optimizer/backend/logs /opt/spotify-optimizer/backend/models
 LimitNOFILE=65535
 
 [Install]
