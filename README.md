@@ -103,6 +103,9 @@ Backend: `http://localhost:8000`
 - For production, set `ENV=production` and `SESSION_COOKIE_SECURE=true`, and provide a Redis URL to share sessions across instances.
 - Rate limiting and JSON request logs are enabled by default. Adjust `RATE_LIMIT_*` and `LOG_*` in `backend/.env`.
 - Set `TRANSITION_LOG_PATH` in `backend/.env` to append optimization transition diagnostics as JSONL.
+- Runtime state is now persisted in SQLite (`STATE_DB_PATH`) so runs/presets/schedules/snapshots survive restarts.
+- Spotify API calls use automatic retry/backoff (`SPOTIFY_API_RETRIES`, `SPOTIFY_API_BACKOFF`) for transient failures.
+- Use `Idempotency-Key` request header on `POST /optimize` and `POST /optimize/async` to avoid duplicate runs.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
 - `/metrics` exposes Prometheus-compatible metrics.
 - Spotify audio-features and audio-analysis endpoints are marked deprecated in their docs. If they are removed, you will need another feature source.
