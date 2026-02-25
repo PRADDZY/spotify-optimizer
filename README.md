@@ -104,6 +104,7 @@ Backend: `http://localhost:8000`
 - Rate limiting and JSON request logs are enabled by default. Adjust `RATE_LIMIT_*` and `LOG_*` in `backend/.env`.
 - Set `TRANSITION_LOG_PATH` in `backend/.env` to append optimization transition diagnostics as JSONL.
 - Runtime state is now persisted in SQLite (`STATE_DB_PATH`) so runs/presets/schedules/snapshots survive restarts.
+- Old runtime records/events are pruned by retention policy (`STATE_RETENTION_DAYS`, default 30).
 - Spotify API calls use automatic retry/backoff (`SPOTIFY_API_RETRIES`, `SPOTIFY_API_BACKOFF`) for transient failures.
 - Use `Idempotency-Key` request header on `POST /optimize` and `POST /optimize/async` to avoid duplicate runs.
 - `/ready` returns readiness and checks Redis connectivity when enabled.
