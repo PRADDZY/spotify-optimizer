@@ -20,6 +20,7 @@ from backend.optimizer_core import (
     transition_reason,
     variety_penalty,
     build_energy_curve,
+    lookahead_penalty,
     minimax_refine,
     order_cost,
     order_max_edge,
@@ -415,3 +416,15 @@ def test_anneal_refine_is_deterministic_for_fixed_seed():
     assert order_a == order_b
     assert cost_a == cost_b
     assert sorted(order_a) == [0, 1, 2, 3, 4]
+
+
+def test_lookahead_penalty_prefers_steady_future_edges():
+    dist = [
+        [0.0, 0.2, 0.4, 0.8],
+        [0.6, 0.0, 0.9, 0.5],
+        [0.6, 0.4, 0.0, 0.2],
+        [0.3, 0.3, 0.3, 0.0],
+    ]
+    spiky = lookahead_penalty([0, 1, 2, 3], dist, horizon=3, decay=0.6)
+    steady = lookahead_penalty([0, 2, 1, 3], dist, horizon=3, decay=0.6)
+    assert steady < spiky

@@ -178,6 +178,8 @@ export default function HomePage() {
   const [annealSteps, setAnnealSteps] = useState(140);
   const [annealTempStart, setAnnealTempStart] = useState(0.08);
   const [annealTempEnd, setAnnealTempEnd] = useState(0.004);
+  const [lookaheadHorizon, setLookaheadHorizon] = useState(3);
+  const [lookaheadDecay, setLookaheadDecay] = useState(0.6);
   const [smoothnessWeight, setSmoothnessWeight] = useState(1);
   const [varietyWeight, setVarietyWeight] = useState(0);
   const [bpmWindow, setBpmWindow] = useState(0.08);
@@ -301,6 +303,8 @@ export default function HomePage() {
     setAnnealSteps(140);
     setAnnealTempStart(0.08);
     setAnnealTempEnd(0.004);
+    setLookaheadHorizon(3);
+    setLookaheadDecay(0.6);
     setMaxBpmJump(0);
     setMinKeyCompatibility(0);
     setNoRepeatArtistWithin(0);
@@ -336,6 +340,14 @@ export default function HomePage() {
           safeAnnealTempStart,
           Math.max(0.0001, annealTempEnd || 0.004)
         );
+        const safeLookaheadHorizon = Math.min(
+          8,
+          Math.max(1, Math.round(lookaheadHorizon || 3))
+        );
+        const safeLookaheadDecay = Math.min(
+          0.99,
+          Math.max(0.05, lookaheadDecay || 0.6)
+        );
         const safeMaxBpmJump = Math.min(240, Math.max(0, maxBpmJump || 0));
         const safeMinKeyCompatibility = Math.min(
           1,
@@ -366,6 +378,8 @@ export default function HomePage() {
             anneal_steps: safeAnnealSteps,
             anneal_temp_start: safeAnnealTempStart,
             anneal_temp_end: safeAnnealTempEnd,
+            lookahead_horizon: safeLookaheadHorizon,
+            lookahead_decay: safeLookaheadDecay,
             smoothness_weight: safeSmoothnessWeight,
             variety_weight: safeVarietyWeight,
             bpm_window: safeBpmWindow,
@@ -688,6 +702,39 @@ export default function HomePage() {
                 onChange={(event) => setAnnealTempEnd(Number(event.target.value))}
               />
               <div className="range-value">{annealTempEnd.toFixed(3)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="lookahead-horizon">Lookahead horizon</label>
+              <input
+                id="lookahead-horizon"
+                type="number"
+                min={1}
+                max={8}
+                step={1}
+                value={lookaheadHorizon}
+                onChange={(event) =>
+                  setLookaheadHorizon(
+                    Number.isFinite(Number(event.target.value))
+                      ? Number(event.target.value)
+                      : 3
+                  )
+                }
+              />
+            </div>
+
+            <div>
+              <label htmlFor="lookahead-decay">Lookahead decay</label>
+              <input
+                id="lookahead-decay"
+                type="range"
+                min={0.05}
+                max={0.99}
+                step={0.01}
+                value={lookaheadDecay}
+                onChange={(event) => setLookaheadDecay(Number(event.target.value))}
+              />
+              <div className="range-value">{lookaheadDecay.toFixed(2)}</div>
             </div>
 
             <div>
