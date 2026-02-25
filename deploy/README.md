@@ -57,6 +57,37 @@ The template sets `client_max_body_size 2m` and conservative proxy buffer sizes 
 
 The frontend serves a static health file at `/.well-known/health`.
 
+## Post-Deploy Validation
+
+1. API readiness:
+
+```bash
+curl -fsS https://api.your-domain.com/ready
+```
+
+2. Frontend health:
+
+```bash
+curl -fsS https://app.your-domain.com/.well-known/health
+```
+
+3. Service status:
+
+```bash
+sudo systemctl status spotify-backend --no-pager
+sudo systemctl status spotify-frontend --no-pager
+```
+
+4. Optional optimize load test from your workstation (authenticated session required):
+
+```bash
+python scripts/load_test_optimize.py \
+  --base-url https://api.your-domain.com \
+  --endpoint /optimize/async \
+  --payload-file scripts/samples/optimize_payload.json \
+  --session-cookie "spotify_opt_sid=YOUR_SESSION_ID"
+```
+
 ## Redis Maintenance
 
 Optional daily Redis health/cleanup task:

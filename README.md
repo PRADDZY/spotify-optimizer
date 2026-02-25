@@ -139,3 +139,19 @@ Backend: `http://localhost:8000`
 ## VPS Deploy
 
 See `deploy/README.md` for the VPS setup script and templates.
+
+## Load Test (Pre-Prod)
+
+Use the concurrent optimize load script against staging/local:
+
+```bash
+python scripts/load_test_optimize.py \
+  --base-url http://localhost:8000 \
+  --endpoint /optimize/async \
+  --payload-file scripts/samples/optimize_payload.json \
+  --session-cookie "spotify_opt_sid=YOUR_SESSION_ID" \
+  --requests 60 \
+  --concurrency 6
+```
+
+The script prints latency percentiles, status counts, and failure rate; it exits non-zero when failure rate exceeds `--max-fail-rate`.
