@@ -19,6 +19,7 @@ from backend.optimizer_core import (
     minimax_refine,
     order_cost,
     order_max_edge,
+    resolve_weights,
 )
 
 
@@ -310,3 +311,18 @@ def test_album_gap_penalty_prefers_spaced_albums():
     crowded = order_cost([0, 1, 2], dist, tracks, None, None, None, config)
     spaced = order_cost([0, 2, 1], dist, tracks, None, None, None, config)
     assert spaced < crowded
+
+
+def test_resolve_weights_supports_extended_objective_channels():
+    weights = resolve_weights(
+        {
+            "bpm": 0.9,
+            "key": 0.4,
+            "loudness": 0.3,
+            "acousticness": 0.1,
+            "time_signature": 0.2,
+        },
+        mix_mode="balanced",
+    )
+    assert set(["bpm", "key", "loudness", "acousticness", "time_signature"]).issubset(weights.keys())
+    assert abs(sum(weights.values()) - 1.0) < 1e-6

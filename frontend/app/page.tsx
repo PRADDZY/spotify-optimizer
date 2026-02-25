@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
@@ -18,6 +18,7 @@ type OptimizeResult = {
   playlist_url: string;
   transition_score: number;
   roughest: RoughTransition[];
+  run_id: string;
 };
 
 type Profile = {
@@ -25,7 +26,50 @@ type Profile = {
   display_name: string;
 };
 
+type WeightKey =
+  | "bpm"
+  | "key"
+  | "energy"
+  | "valence"
+  | "dance"
+  | "loudness"
+  | "acousticness"
+  | "instrumentalness"
+  | "speechiness"
+  | "liveness"
+  | "time_signature";
+
+type WeightState = Record<WeightKey, number>;
+
 const defaultApi = "http://localhost:8000";
+
+const DEFAULT_WEIGHTS: WeightState = {
+  bpm: 0.32,
+  key: 0.28,
+  energy: 0.12,
+  valence: 0.06,
+  dance: 0.06,
+  loudness: 0.06,
+  acousticness: 0.03,
+  instrumentalness: 0.02,
+  speechiness: 0.02,
+  liveness: 0.01,
+  time_signature: 0.02,
+};
+
+const WEIGHT_FIELDS: Array<{ key: WeightKey; label: string; max: number }> = [
+  { key: "bpm", label: "BPM", max: 1 },
+  { key: "key", label: "Key", max: 1 },
+  { key: "energy", label: "Energy", max: 1 },
+  { key: "valence", label: "Valence", max: 1 },
+  { key: "dance", label: "Dance", max: 1 },
+  { key: "loudness", label: "Loudness", max: 1 },
+  { key: "acousticness", label: "Acoustic", max: 1 },
+  { key: "instrumentalness", label: "Instrumental", max: 1 },
+  { key: "speechiness", label: "Speech", max: 1 },
+  { key: "liveness", label: "Live", max: 1 },
+  { key: "time_signature", label: "Time Signature", max: 1 },
+];
 
 export default function HomePage() {
   const apiBase = useMemo(
@@ -45,6 +89,10 @@ export default function HomePage() {
   const [keyLockWindow, setKeyLockWindow] = useState(3);
   const [tempoRampWeight, setTempoRampWeight] = useState(0.08);
   const [minimaxPasses, setMinimaxPasses] = useState(2);
+  const [smoothnessWeight, setSmoothnessWeight] = useState(1);
+  const [varietyWeight, setVarietyWeight] = useState(0);
+  const [bpmWindow, setBpmWindow] = useState(0.08);
+  const [weights, setWeights] = useState<WeightState>({ ...DEFAULT_WEIGHTS });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -73,6 +121,17 @@ export default function HomePage() {
     window.location.href = `${apiBase}/logout`;
   };
 
+  const updateWeight = (key: WeightKey, value: number) => {
+    setWeights((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetObjective = () => {
+    setWeights({ ...DEFAULT_WEIGHTS });
+    setSmoothnessWeight(1);
+    setVarietyWeight(0);
+    setBpmWindow(0.08);
+  };
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
@@ -81,9 +140,18 @@ export default function HomePage() {
     startTransition(async () => {
       setStatus("Optimizing transitions...");
       try {
-        const safeKeyLockWindow = Math.min(12, Math.max(1, Math.round(keyLockWindow || 3)));
-        const safeMinimaxPasses = Math.min(10, Math.max(0, Math.round(minimaxPasses || 2)));
+        const safeKeyLockWindow = Math.min(
+          12,
+          Math.max(1, Math.round(keyLockWindow || 3))
+        );
+        const safeMinimaxPasses = Math.min(
+          10,
+          Math.max(0, Math.round(minimaxPasses || 2))
+        );
         const safeTempoRampWeight = Math.min(1, Math.max(0, tempoRampWeight || 0));
+        const safeSmoothnessWeight = Math.min(5, Math.max(0, smoothnessWeight || 0));
+        const safeVarietyWeight = Math.min(5, Math.max(0, varietyWeight || 0));
+        const safeBpmWindow = Math.min(0.5, Math.max(0.01, bpmWindow || 0.08));
 
         const response = await fetch(`${apiBase}/optimize`, {
           method: "POST",
@@ -99,6 +167,10 @@ export default function HomePage() {
             key_lock_window: safeKeyLockWindow,
             tempo_ramp_weight: safeTempoRampWeight,
             minimax_passes: safeMinimaxPasses,
+            smoothness_weight: safeSmoothnessWeight,
+            variety_weight: safeVarietyWeight,
+            bpm_window: safeBpmWindow,
+            weights,
           }),
         });
 
@@ -117,7 +189,7 @@ export default function HomePage() {
 
         setResult(payload);
         setStatus("Mix optimized. Your playlist is ready.");
-      } catch (err) {
+      } catch {
         setError("Failed to reach the optimizer. Is the API running?");
       }
     });
@@ -275,6 +347,73 @@ export default function HomePage() {
                 }
               />
             </div>
+
+            <div>
+              <label htmlFor="smoothness-weight">Smoothness weight</label>
+              <input
+                id="smoothness-weight"
+                type="range"
+                min={0}
+                max={5}
+                step={0.1}
+                value={smoothnessWeight}
+                onChange={(event) => setSmoothnessWeight(Number(event.target.value))}
+              />
+              <div className="range-value">{smoothnessWeight.toFixed(1)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="variety-weight">Variety weight</label>
+              <input
+                id="variety-weight"
+                type="range"
+                min={0}
+                max={5}
+                step={0.1}
+                value={varietyWeight}
+                onChange={(event) => setVarietyWeight(Number(event.target.value))}
+              />
+              <div className="range-value">{varietyWeight.toFixed(1)}</div>
+            </div>
+
+            <div>
+              <label htmlFor="bpm-window">BPM window</label>
+              <input
+                id="bpm-window"
+                type="range"
+                min={0.01}
+                max={0.3}
+                step={0.01}
+                value={bpmWindow}
+                onChange={(event) => setBpmWindow(Number(event.target.value))}
+              />
+              <div className="range-value">{bpmWindow.toFixed(2)}</div>
+            </div>
+          </div>
+
+          <div className="result" style={{ marginTop: 6 }}>
+            <div className="button-row" style={{ marginBottom: 12 }}>
+              <button type="button" className="secondary" onClick={resetObjective}>
+                Reset objective weights
+              </button>
+            </div>
+            <div className="weight-grid">
+              {WEIGHT_FIELDS.map((field) => (
+                <div key={field.key} className="weight-row">
+                  <label htmlFor={`weight-${field.key}`}>{field.label}</label>
+                  <input
+                    id={`weight-${field.key}`}
+                    type="range"
+                    min={0}
+                    max={field.max}
+                    step={0.01}
+                    value={weights[field.key]}
+                    onChange={(event) => updateWeight(field.key, Number(event.target.value))}
+                  />
+                  <div className="range-value">{weights[field.key].toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="toggle">
@@ -315,12 +454,9 @@ export default function HomePage() {
                 <div className="list">
                   {result.roughest.map((item, index) => (
                     <div className="list-item" key={`${item.from}-${index}`}>
-                      {item.from} {"->"} {item.to} | score {item.score.toFixed(3)} | BPM
-                      {" "}
-                      {item.from_bpm?.toFixed?.(1) ?? "?"} {"->"}
-                      {" "}
-                      {item.to_bpm?.toFixed?.(1) ?? "?"} | Key {item.from_key} {"->"}
-                      {" "}
+                      {item.from} {"->"} {item.to} | score {item.score.toFixed(3)} | BPM{" "}
+                      {item.from_bpm?.toFixed?.(1) ?? "?"} {"->"} {" "}
+                      {item.to_bpm?.toFixed?.(1) ?? "?"} | Key {item.from_key} {"->"} {" "}
                       {item.to_key}
                     </div>
                   ))}
@@ -339,7 +475,8 @@ export default function HomePage() {
               energy/valence/danceability texture nudges. Choose harmonic mixing
               or vibe continuity, and optionally apply a warm-up to peak to
               cooldown energy curve. Advanced controls tune local key-locking,
-              tempo ramp shaping, and minimax passes that target rough edges.
+              tempo ramp shaping, objective weights, and minimax passes that
+              target rough edges.
             </p>
           </div>
           <div className="card">
@@ -355,7 +492,3 @@ export default function HomePage() {
     </main>
   );
 }
-
-
-
-
