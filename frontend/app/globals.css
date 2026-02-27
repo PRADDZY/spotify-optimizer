@@ -96,21 +96,21 @@ body {
 
 .hero h1 {
   margin: 10px 0 10px;
-  font-family: var(--font-display), "Bebas Neue", sans-serif;
-  font-size: clamp(3.2rem, 7vw, 6.2rem);
-  line-height: 0.95;
-  letter-spacing: 0.03em;
-  font-weight: 400;
+  font-family: var(--font-display), sans-serif;
+  font-size: clamp(3.05rem, 7vw, 5.4rem);
+  line-height: 0.92;
+  letter-spacing: 0.055em;
+  font-weight: 700;
   text-transform: uppercase;
-  color: #202632;
+  color: #f6fbff;
 }
 
 .hero p {
   margin: 0;
   max-width: 600px;
-  color: var(--ink-1);
-  font-size: 1.04rem;
-  line-height: 1.72;
+  color: #b8c4d0;
+  font-size: 1rem;
+  line-height: 1.74;
 }
 
 .hero-kicker {
@@ -161,18 +161,18 @@ body {
 
 .ui-card-title {
   margin: 0;
-  font-family: var(--font-display), "Bebas Neue", sans-serif;
-  font-weight: 400;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: #232938;
-  font-size: 1.52rem;
-  line-height: 1.02;
+  letter-spacing: 0.08em;
+  color: #f0f6fc;
+  font-size: 1.44rem;
+  line-height: 1.05;
 }
 
 .ui-card-description {
   margin: 8px 0 0;
-  color: var(--ink-2);
+  color: #8290a0;
   font-size: 0.9rem;
   line-height: 1.56;
 }
@@ -211,10 +211,10 @@ label {
   display: inline-block;
   margin: 0 0 8px;
   font-size: 0.76rem;
-  color: #485163;
+  color: #96a3b3;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-weight: 600;
 }
 
 .ui-input,

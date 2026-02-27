@@ -1,15 +1,15 @@
 import "./globals.css";
-import { Bebas_Neue, DM_Sans } from "next/font/google";
+import { Barlow_Condensed, IBM_Plex_Sans } from "next/font/google";
 
-const display = Bebas_Neue({
+const display = Barlow_Condensed({
   subsets: ["latin"],
-  weight: ["400"],
+  weight: ["500", "700"],
   variable: "--font-display",
 });
 
-const body = DM_Sans({
+const body = IBM_Plex_Sans({
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
+  weight: ["400", "500", "600"],
   variable: "--font-body",
 });
 
