@@ -1,6 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { motion } from "framer-motion";
+
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 
 type RoughTransition = {
   score: number;
@@ -222,6 +235,19 @@ const WEIGHT_FIELDS: Array<{ key: WeightKey; label: string; max: number }> = [
   { key: "liveness", label: "Live", max: 1 },
   { key: "time_signature", label: "Time Signature", max: 1 },
 ];
+
+const sectionMotion = {
+  hidden: { opacity: 0, y: 24 },
+  visible: (delay = 0) => ({
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.55,
+      ease: [0.22, 1, 0.36, 1] as const,
+      delay,
+    },
+  }),
+};
 
 export default function HomePage() {
   const apiBase = useMemo(
@@ -647,9 +673,19 @@ export default function HomePage() {
   };
 
   return (
-    <main>
-      <section className="hero">
+    <motion.main
+      className="app-shell"
+      initial="hidden"
+      animate="visible"
+      variants={sectionMotion}
+    >
+      <div className="ambient-orb ambient-orb-left" aria-hidden="true" />
+      <div className="ambient-orb ambient-orb-right" aria-hidden="true" />
+      <motion.section className="hero" variants={sectionMotion} custom={0.06}>
         <div>
+          <Badge variant="outline" className="hero-kicker">
+            Transition-first Spotify optimizer
+          </Badge>
           <h1>Mix Optimizer</h1>
           <p>
             Treat your playlist like a DJ set. The optimizer pulls tempo, key,
@@ -657,23 +693,47 @@ export default function HomePage() {
             playlist with a crisp &quot;_optimized&quot; suffix.
           </p>
         </div>
-        <div className="console-panel">
-          <h2>Signal Path</h2>
-          <div className="pill">
-            {profile ? `Connected: ${profile.display_name}` : "Not connected"}
-          </div>
-          <div className="meter">
-            {Array.from({ length: 12 }).map((_, index) => (
-              <span key={index} />
-            ))}
-          </div>
-        </div>
-      </section>
+        <motion.div
+          whileHover={{ y: -4, scale: 1.01 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+        >
+          <Card className="console-panel">
+            <CardHeader>
+              <CardTitle>Signal Path</CardTitle>
+              <CardDescription>
+                Live transition pressure across the current optimization pass.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Badge className="pill" variant={profile ? "default" : "secondary"}>
+                {profile ? `Connected: ${profile.display_name}` : "Not connected"}
+              </Badge>
+              <div className="meter">
+                {Array.from({ length: 12 }).map((_, index) => (
+                  <motion.span
+                    key={index}
+                    animate={{
+                      height: [12 + (index % 5) * 4, 24 + (index % 4) * 5, 16 + (index % 3) * 3],
+                      opacity: [0.35, 0.95, 0.45],
+                    }}
+                    transition={{
+                      duration: 1.9 + (index % 4) * 0.2,
+                      repeat: Number.POSITIVE_INFINITY,
+                      ease: "easeInOut",
+                      delay: index * 0.06,
+                    }}
+                  />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </motion.section>
 
-      <section className="grid">
-        <form className="card" onSubmit={handleSubmit}>
-          <label htmlFor="playlist">Playlist URL or ID</label>
-          <input
+      <motion.section className="grid" variants={sectionMotion} custom={0.12}>
+        <form className="card form-card" onSubmit={handleSubmit}>
+          <Label htmlFor="playlist">Playlist URL or ID</Label>
+          <Input
             id="playlist"
             type="text"
             placeholder="https://open.spotify.com/playlist/..."
@@ -682,8 +742,8 @@ export default function HomePage() {
             required
           />
 
-          <label htmlFor="name">Optional base name</label>
-          <input
+          <Label htmlFor="name">Optional base name</Label>
+          <Input
             id="name"
             type="text"
             placeholder="Late Night Switchups"
@@ -691,9 +751,10 @@ export default function HomePage() {
             onChange={(event) => setMixName(event.target.value)}
           />
 
-          <label htmlFor="preset">Preset mode</label>
+          <Label htmlFor="preset">Preset mode</Label>
           <select
             id="preset"
+            className="ui-select"
             value={presetId}
             onChange={(event) => setPresetId(event.target.value)}
           >
@@ -710,52 +771,62 @@ export default function HomePage() {
             </div>
           )}
 
-          <label>Mix focus</label>
+          <Label>Mix focus</Label>
           <div className="segmented segmented-3" role="group" aria-label="Mix focus">
-            <button
-              type="button"
-              className={`seg ${mixMode === "balanced" ? "active" : ""}`}
-              onClick={() => setMixMode("balanced")}
-              aria-pressed={mixMode === "balanced"}
-            >
-              Balanced
-            </button>
-            <button
-              type="button"
-              className={`seg ${mixMode === "harmonic" ? "active" : ""}`}
-              onClick={() => setMixMode("harmonic")}
-              aria-pressed={mixMode === "harmonic"}
-            >
-              Harmonic mixing
-            </button>
-            <button
-              type="button"
-              className={`seg ${mixMode === "vibe" ? "active" : ""}`}
-              onClick={() => setMixMode("vibe")}
-              aria-pressed={mixMode === "vibe"}
-            >
-              Vibe continuity
-            </button>
-          </div>
+              <Button
+                type="button"
+                variant={mixMode === "balanced" ? "default" : "outline"}
+                size="sm"
+                className={`seg ${mixMode === "balanced" ? "active" : ""}`}
+                onClick={() => setMixMode("balanced")}
+                aria-pressed={mixMode === "balanced"}
+              >
+                Balanced
+              </Button>
+              <Button
+                type="button"
+                variant={mixMode === "harmonic" ? "default" : "outline"}
+                size="sm"
+                className={`seg ${mixMode === "harmonic" ? "active" : ""}`}
+                onClick={() => setMixMode("harmonic")}
+                aria-pressed={mixMode === "harmonic"}
+              >
+                Harmonic mixing
+              </Button>
+              <Button
+                type="button"
+                variant={mixMode === "vibe" ? "default" : "outline"}
+                size="sm"
+                className={`seg ${mixMode === "vibe" ? "active" : ""}`}
+                onClick={() => setMixMode("vibe")}
+                aria-pressed={mixMode === "vibe"}
+              >
+                Vibe continuity
+              </Button>
+            </div>
 
-          <label>Solver mode</label>
+          <Label>Solver mode</Label>
           <div className="segmented" role="group" aria-label="Solver mode">
-            <button
+            <Button
               type="button"
+              variant={solverMode === "classic" ? "default" : "outline"}
+              size="sm"
               className={`seg ${solverMode === "classic" ? "active" : ""}`}
               onClick={() => setSolverMode("classic")}
               aria-pressed={solverMode === "classic"}
             >
               Classic
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant={solverMode === "hybrid" ? "default" : "outline"}
+              size="sm"
               className={`seg ${solverMode === "hybrid" ? "active" : ""}`}
               onClick={() => setSolverMode("hybrid")}
               aria-pressed={solverMode === "hybrid"}
             >
               Hybrid
-            </button>
+            </Button>
           </div>
 
           <div className="toggle">
@@ -1034,17 +1105,18 @@ export default function HomePage() {
 
           <div className="result" style={{ marginTop: 6 }}>
             <div className="button-row" style={{ marginBottom: 12 }}>
-              <button type="button" className="secondary" onClick={resetObjective}>
+              <Button type="button" variant="ghost" size="sm" onClick={resetObjective}>
                 Reset objective weights
-              </button>
+              </Button>
             </div>
             <div className="weight-grid">
               {WEIGHT_FIELDS.map((field) => (
                 <div key={field.key} className="weight-row">
-                  <label htmlFor={`weight-${field.key}`}>{field.label}</label>
+                  <Label htmlFor={`weight-${field.key}`}>{field.label}</Label>
                   <input
                     id={`weight-${field.key}`}
                     type="range"
+                    className="ui-range"
                     min={0}
                     max={field.max}
                     step={0.01}
@@ -1060,24 +1132,25 @@ export default function HomePage() {
           <div className="toggle">
             <input
               id="public"
+              className="ui-checkbox"
               type="checkbox"
               checked={isPublic}
               onChange={(event) => setIsPublic(event.target.checked)}
             />
-            <label htmlFor="public">Make optimized playlist public</label>
+            <Label htmlFor="public">Make optimized playlist public</Label>
           </div>
 
           <div className="button-row">
-            <button type="button" className="secondary" onClick={handleConnect}>
+            <Button type="button" variant="outline" onClick={handleConnect}>
               Connect Spotify
-            </button>
-            <button type="submit" className="primary" disabled={isPending}>
+            </Button>
+            <Button type="submit" disabled={isPending}>
               {isPending ? "Optimizing..." : "Optimize"}
-            </button>
+            </Button>
             {profile && (
-              <button type="button" className="secondary" onClick={handleLogout}>
+              <Button type="button" variant="ghost" onClick={handleLogout}>
                 Disconnect
-              </button>
+              </Button>
             )}
           </div>
 
@@ -1086,7 +1159,7 @@ export default function HomePage() {
 
           {result && (
             <div className="result">
-              <div className="pill">Transition score: {result.transition_score}</div>
+              <Badge className="pill">Transition score: {result.transition_score}</Badge>
               <div className="status">
                 New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
               </div>
@@ -1108,9 +1181,9 @@ export default function HomePage() {
                 transitionSummary.dominant_penalties.length > 0 && (
                   <div className="dominant-reasons">
                     {transitionSummary.dominant_penalties.map((item) => (
-                      <span className="pill" key={item.reason_code}>
+                      <Badge className="pill" variant="secondary" key={item.reason_code}>
                         {item.reason_code}: {item.count}
-                      </span>
+                      </Badge>
                     ))}
                   </div>
                 )}
@@ -1153,23 +1226,31 @@ export default function HomePage() {
         </form>
 
         <div className="side-panel">
-          <div className="card">
-            <h2 style={{ marginTop: 0 }}>How it Optimizes</h2>
-            <p className="disclaimer">
-              Transitions are scored with BPM compatibility (including half/double
-              time), Camelot key adjacency, loudness matching, and subtle
-              energy/valence/danceability texture nudges. Choose harmonic mixing
-              or vibe continuity, and optionally apply a warm-up to peak to
-              cooldown energy curve. Advanced controls tune local key-locking,
-              tempo ramp shaping, objective weights, and minimax passes that
-              target rough edges.
-            </p>
-          </div>
-          <div className="card">
-            <h2 style={{ marginTop: 0 }}>A/B Compare Runs</h2>
-            <label htmlFor="compare-baseline">Baseline run</label>
+          <Card className="card side-card">
+            <CardHeader>
+              <CardTitle>How it Optimizes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="disclaimer">
+                Transitions are scored with BPM compatibility (including half/double
+                time), Camelot key adjacency, loudness matching, and subtle
+                energy/valence/danceability texture nudges. Choose harmonic mixing
+                or vibe continuity, and optionally apply a warm-up to peak to
+                cooldown energy curve. Advanced controls tune local key-locking,
+                tempo ramp shaping, objective weights, and minimax passes that
+                target rough edges.
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="card side-card">
+            <CardHeader>
+              <CardTitle>A/B Compare Runs</CardTitle>
+            </CardHeader>
+            <CardContent>
+            <Label htmlFor="compare-baseline">Baseline run</Label>
             <select
               id="compare-baseline"
+              className="ui-select"
               value={compareBaselineRunId}
               onChange={(event) => setCompareBaselineRunId(event.target.value)}
             >
@@ -1181,9 +1262,10 @@ export default function HomePage() {
               ))}
             </select>
 
-            <label htmlFor="compare-candidate">Candidate run</label>
+            <Label htmlFor="compare-candidate">Candidate run</Label>
             <select
               id="compare-candidate"
+              className="ui-select"
               value={compareCandidateRunId}
               onChange={(event) => setCompareCandidateRunId(event.target.value)}
             >
@@ -1195,14 +1277,14 @@ export default function HomePage() {
               ))}
             </select>
             <div className="button-row">
-              <button
+              <Button
                 type="button"
-                className="secondary"
+                variant="outline"
                 onClick={handleCompareRuns}
                 disabled={isComparing}
               >
                 {isComparing ? "Comparing..." : "Compare"}
-              </button>
+              </Button>
             </div>
             {compareError && <div className="status">{compareError}</div>}
             {compareResult && (
@@ -1234,13 +1316,17 @@ export default function HomePage() {
                 )}
               </div>
             )}
-          </div>
-          <div className="card">
-            <h2 style={{ marginTop: 0 }}>Transition Model</h2>
-            <p className="disclaimer">
-              Learns from explicit manual feedback labels to refine future transition
-              scoring. Uses heuristic fallback when no model is active.
-            </p>
+            </CardContent>
+          </Card>
+          <Card className="card side-card">
+            <CardHeader>
+              <CardTitle>Transition Model</CardTitle>
+              <CardDescription>
+                Learns from explicit manual feedback labels to refine future transition
+                scoring. Uses heuristic fallback when no model is active.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
             <div className="list">
               <div className="list-item">
                 Active: {modelStatus?.active_version ?? "none"}
@@ -1296,14 +1382,14 @@ export default function HomePage() {
               </div>
             )}
             <div className="button-row" style={{ marginTop: 12 }}>
-              <button
+              <Button
                 type="button"
-                className="secondary"
+                variant="outline"
                 onClick={handleTrainModel}
                 disabled={isTrainingModel}
               >
                 {isTrainingModel ? "Training..." : "Train model"}
-              </button>
+              </Button>
             </div>
             {modelTrainingJob && (
               <div className="list" style={{ marginTop: 12 }}>
@@ -1313,17 +1399,22 @@ export default function HomePage() {
               </div>
             )}
             {modelMessage && <div className="status">{modelMessage}</div>}
-          </div>
-          <div className="card">
-            <h2 style={{ marginTop: 0 }}>Keep in Mind</h2>
-            <p className="disclaimer">
-              Spotify has marked its audio-features endpoints as deprecated. This
-              tool is built for personal use. Transition model training is based
-              on explicit user feedback labels and transition diagnostics.
-            </p>
-          </div>
+            </CardContent>
+          </Card>
+          <Card className="card side-card">
+            <CardHeader>
+              <CardTitle>Keep in Mind</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="disclaimer">
+                Spotify has marked its audio-features endpoints as deprecated. This
+                tool is built for personal use. Transition model training is based
+                on explicit user feedback labels and transition diagnostics.
+              </p>
+            </CardContent>
+          </Card>
         </div>
-      </section>
-    </main>
+      </motion.section>
+    </motion.main>
   );
 }
