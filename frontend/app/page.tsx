@@ -1175,14 +1175,18 @@ export default function HomePage() {
           {error && <div className="status status-error">{error}</div>}
 
           {result && (
-            <div className="result">
-              <Badge className="pill">Transition score: {result.transition_score}</Badge>
-              <div className="status">
+            <div className="result run-output">
+              <div className="result-header">
+                <Badge className="pill">Transition score: {result.transition_score}</Badge>
+                <Badge variant="outline">Run ID: {result.run_id.slice(0, 12)}</Badge>
+              </div>
+              <div className="status result-link">
                 New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
               </div>
 
               {result.roughest?.length > 0 && (
-                <div className="list">
+                <div className="list rough-list">
+                  <div className="list-caption">Roughest edges</div>
                   {result.roughest.map((item, index) => (
                     <div className="list-item" key={`${item.from}-${index}`}>
                       {item.from} {"->"} {item.to} | score {item.score.toFixed(3)} | BPM{" "}
@@ -1207,7 +1211,8 @@ export default function HomePage() {
 
               {transitionDetails.length > 0 && (
                 <div className="transition-diagnostics">
-                  <div className="list">
+                  <div className="list edge-list">
+                    <div className="list-caption">Top transition diagnostics</div>
                     {transitionDetails.slice(0, 12).map((item, index) => (
                       <button
                         type="button"
@@ -1224,11 +1229,11 @@ export default function HomePage() {
                   </div>
                   {selectedTransition && (
                     <div className="transition-detail">
-                      <div className="status">{selectedTransition.reason}</div>
+                      <div className="status detail-reason">{selectedTransition.reason}</div>
                       <div className="weight-grid">
                         {Object.entries(selectedTransition.component_share || {}).map(
                           ([key, value]) => (
-                            <div className="list-item" key={key}>
+                            <div className="list-item mini-chip" key={key}>
                               {key}: {(value * 100).toFixed(1)}%
                             </div>
                           )
