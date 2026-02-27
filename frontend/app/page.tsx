@@ -1212,12 +1212,14 @@ export default function HomePage() {
 
           {result && (
             <div className="result run-output">
-              <div className="result-header">
-                <Badge className="pill">Transition score: {result.transition_score}</Badge>
-                <Badge variant="outline">Run ID: {result.run_id.slice(0, 12)}</Badge>
-              </div>
-              <div className="status result-link">
-                New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
+              <div className="result-header run-topline">
+                <div className="run-metrics">
+                  <Badge className="pill">Transition score: {result.transition_score}</Badge>
+                  <Badge variant="outline">Run ID: {result.run_id.slice(0, 12)}</Badge>
+                </div>
+                <div className="status result-link">
+                  New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
+                </div>
               </div>
 
               {result.roughest?.length > 0 && (
@@ -1266,6 +1268,7 @@ export default function HomePage() {
                   </div>
                   {selectedTransition && (
                     <div className="transition-detail">
+                      <div className="list-caption">Selected transition reason</div>
                       <div className="status detail-reason">{selectedTransition.reason}</div>
                       <div className="weight-grid">
                         {Object.entries(selectedTransition.component_share || {}).map(

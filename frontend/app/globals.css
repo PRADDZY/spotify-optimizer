@@ -515,6 +515,16 @@ input[type="range"],
   align-items: center;
 }
 
+.run-topline {
+  justify-content: space-between;
+}
+
+.run-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .result-link {
   margin-top: 2px;
 }
@@ -593,7 +603,8 @@ input[type="range"],
 .transition-diagnostics {
   margin-top: 14px;
   display: grid;
-  gap: 12px;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
 }
 
 .transition-item {
@@ -617,6 +628,7 @@ input[type="range"],
   border-radius: 12px;
   background: rgba(9, 13, 19, 0.68);
   padding: 12px;
+  align-self: start;
 }
 
 .detail-reason {
@@ -721,6 +733,10 @@ input[type="range"],
   .advanced-grid,
   .weight-grid,
   .segmented-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .transition-diagnostics {
     grid-template-columns: 1fr;
   }
 
