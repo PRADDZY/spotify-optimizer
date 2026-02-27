@@ -681,22 +681,28 @@ export default function HomePage() {
     >
       <div className="ambient-orb ambient-orb-left" aria-hidden="true" />
       <div className="ambient-orb ambient-orb-right" aria-hidden="true" />
-      <motion.section className="hero" variants={sectionMotion} custom={0.06}>
-        <div className="hero-copy">
-          <Badge variant="outline" className="hero-kicker">
-            Audio Lab mode
-          </Badge>
-          <h1>Mix Optimizer</h1>
-          <p>
-            Build DJ-grade transitions with measurable control. Optimize key
-            compatibility, tempo flow, and edge roughness into a new playlist
-            that preserves vibe while cutting harsh handoffs.
-          </p>
-          <div className="hero-stats">
-            <Badge variant="secondary">{profile ? "Spotify linked" : "Spotify not linked"}</Badge>
-            <Badge variant="outline">BPM + key diagnostics</Badge>
-          </div>
-        </div>
+      <motion.section className="overview-grid" variants={sectionMotion} custom={0.06}>
+        <Card className="hero-panel">
+          <CardContent>
+            <div className="hero-copy">
+              <Badge variant="outline" className="hero-kicker">
+                Audio Lab mode
+              </Badge>
+              <h1>Mix Optimizer</h1>
+              <p>
+                Build DJ-grade transitions with measurable control. Optimize key
+                compatibility, tempo flow, and edge roughness into a new playlist
+                that preserves vibe while cutting harsh handoffs.
+              </p>
+              <div className="hero-stats">
+                <Badge variant="secondary">
+                  {profile ? "Spotify linked" : "Spotify not linked"}
+                </Badge>
+                <Badge variant="outline">BPM + key diagnostics</Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <motion.div
           whileHover={{ y: -2 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
@@ -731,8 +737,9 @@ export default function HomePage() {
         </motion.div>
       </motion.section>
 
-      <motion.section className="grid" variants={sectionMotion} custom={0.12}>
-        <form className="card form-card" onSubmit={handleSubmit}>
+      <motion.section className="workspace-grid" variants={sectionMotion} custom={0.12}>
+        <div className="workspace-main">
+          <form className="card form-card" onSubmit={handleSubmit}>
           <div className="field">
             <Label htmlFor="playlist">Playlist URL or ID</Label>
             <Input
@@ -1246,9 +1253,10 @@ export default function HomePage() {
               )}
             </div>
           )}
-        </form>
+          </form>
+        </div>
 
-        <div className="side-panel">
+        <aside className="side-panel workspace-rail">
           <Card className="card side-card">
             <CardHeader>
               <CardTitle>How it Optimizes</CardTitle>
@@ -1441,7 +1449,7 @@ export default function HomePage() {
               </p>
             </CardContent>
           </Card>
-        </div>
+        </aside>
       </motion.section>
     </motion.main>
   );
