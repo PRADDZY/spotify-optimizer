@@ -171,8 +171,9 @@ body {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.72fr);
+  gap: 20px;
+  align-items: start;
 }
 
 .workspace-main {
@@ -182,6 +183,8 @@ body {
 .workspace-rail {
   min-width: 0;
   align-self: start;
+  position: sticky;
+  top: 20px;
 }
 
 .card,
@@ -654,7 +657,7 @@ input[type="range"],
 
 .side-panel {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .side-inline-note {
@@ -720,6 +723,11 @@ input[type="range"],
   .overview-grid,
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-rail {
+    position: static;
+    top: auto;
   }
 
   .ambient-orb-left {

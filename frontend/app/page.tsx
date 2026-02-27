@@ -1291,23 +1291,6 @@ export default function HomePage() {
         <aside className="side-panel workspace-rail">
           <Card className="card side-card">
             <CardHeader>
-              <CardTitle>How it Optimizes</CardTitle>
-              <CardDescription>Core scoring logic used by the optimizer engine.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="disclaimer">
-                Transitions are scored with BPM compatibility (including half/double
-                time), Camelot key adjacency, loudness matching, and subtle
-                energy/valence/danceability texture nudges. Choose harmonic mixing
-                or vibe continuity, and optionally apply a warm-up to peak to
-                cooldown energy curve. Advanced controls tune local key-locking,
-                tempo ramp shaping, objective weights, and minimax passes that
-                target rough edges.
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="card side-card">
-            <CardHeader>
               <CardTitle>A/B Compare Runs</CardTitle>
               <CardDescription>Quickly benchmark two optimization runs.</CardDescription>
             </CardHeader>
@@ -1469,6 +1452,23 @@ export default function HomePage() {
                 </div>
               )}
               {modelMessage && <div className="status">{modelMessage}</div>}
+            </CardContent>
+          </Card>
+          <Card className="card side-card">
+            <CardHeader>
+              <CardTitle>How it Optimizes</CardTitle>
+              <CardDescription>Core scoring logic used by the optimizer engine.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="disclaimer">
+                Transitions are scored with BPM compatibility (including half/double
+                time), Camelot key adjacency, loudness matching, and subtle
+                energy/valence/danceability texture nudges. Choose harmonic mixing
+                or vibe continuity, and optionally apply a warm-up to peak to
+                cooldown energy curve. Advanced controls tune local key-locking,
+                tempo ramp shaping, objective weights, and minimax passes that
+                target rough edges.
+              </p>
             </CardContent>
           </Card>
           <Card className="card side-card">
