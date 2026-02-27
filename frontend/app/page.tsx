@@ -690,10 +690,27 @@ export default function HomePage() {
               </Badge>
               <h1>Mix Optimizer</h1>
               <p>
-                Build DJ-grade transitions with measurable control. Optimize key
-                compatibility, tempo flow, and edge roughness into a new playlist
-                that preserves vibe while cutting harsh handoffs.
+                Build transition-safe listening flows with precise control over key
+                adjacency, tempo movement, and rough-edge minimization.
               </p>
+              <div className="hero-meta-grid">
+                <div className="hero-meta">
+                  <span>Mix mode</span>
+                  <strong>{mixMode}</strong>
+                </div>
+                <div className="hero-meta">
+                  <span>Solver</span>
+                  <strong>{solverMode}</strong>
+                </div>
+                <div className="hero-meta">
+                  <span>Flow profile</span>
+                  <strong>{flowProfile}</strong>
+                </div>
+                <div className="hero-meta">
+                  <span>Preset</span>
+                  <strong>{activePreset?.name ?? "Manual"}</strong>
+                </div>
+              </div>
               <div className="hero-stats">
                 <Badge variant="secondary">
                   {profile ? "Spotify linked" : "Spotify not linked"}
@@ -711,13 +728,20 @@ export default function HomePage() {
             <CardHeader>
               <CardTitle>Signal Board</CardTitle>
               <CardDescription>
-                Snapshot of transition strain distribution before a run.
+                Live indicators for connection and current optimization context.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Badge className="pill" variant={profile ? "default" : "secondary"}>
                 {profile ? `Connected: ${profile.display_name}` : "Not connected"}
               </Badge>
+              <div className="hero-stats signal-stats">
+                <Badge variant="outline">Beam {beamWidth}</Badge>
+                <Badge variant="outline">Lookahead {lookaheadHorizon}</Badge>
+                <Badge variant="outline">
+                  {flowCurve ? "Flow curve on" : "Flow curve off"}
+                </Badge>
+              </div>
               <div className="meter">
                 {Array.from({ length: 12 }).map((_, index) => (
                   <motion.span
