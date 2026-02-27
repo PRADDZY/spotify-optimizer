@@ -1292,6 +1292,7 @@ export default function HomePage() {
           <Card className="card side-card">
             <CardHeader>
               <CardTitle>How it Optimizes</CardTitle>
+              <CardDescription>Core scoring logic used by the optimizer engine.</CardDescription>
             </CardHeader>
             <CardContent>
               <p className="disclaimer">
@@ -1311,6 +1312,7 @@ export default function HomePage() {
               <CardDescription>Quickly benchmark two optimization runs.</CardDescription>
             </CardHeader>
             <CardContent className="compare-panel">
+              <div className="side-inline-note">Baseline vs candidate edge quality</div>
               <div className="field">
                 <Label htmlFor="compare-baseline">Baseline run</Label>
                 <select
@@ -1395,15 +1397,15 @@ export default function HomePage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="model-panel">
+              <div className="hero-stats">
+                <Badge variant="secondary">
+                  Active: {modelStatus?.active_version ?? "none"}
+                </Badge>
+                <Badge variant="outline">Samples: {modelStatus?.sample_count ?? 0}</Badge>
+              </div>
               <div className="list">
                 <div className="list-item">
-                  Active: {modelStatus?.active_version ?? "none"}
-                </div>
-                <div className="list-item">
                   Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
-                </div>
-                <div className="list-item">
-                  Samples: {modelStatus?.sample_count ?? 0}
                 </div>
                 <div className="list-item">
                   Gate min accuracy:{" "}

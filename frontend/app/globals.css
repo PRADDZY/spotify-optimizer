@@ -181,6 +181,7 @@ body {
 
 .workspace-rail {
   min-width: 0;
+  align-self: start;
 }
 
 .card,
@@ -643,6 +644,14 @@ input[type="range"],
 .side-panel {
   display: grid;
   gap: 18px;
+}
+
+.side-inline-note {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #87a0b8;
+  margin-bottom: 8px;
 }
 
 .compare-panel,
