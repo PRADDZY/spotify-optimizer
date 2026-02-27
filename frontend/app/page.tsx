@@ -682,26 +682,30 @@ export default function HomePage() {
       <div className="ambient-orb ambient-orb-left" aria-hidden="true" />
       <div className="ambient-orb ambient-orb-right" aria-hidden="true" />
       <motion.section className="hero" variants={sectionMotion} custom={0.06}>
-        <div>
+        <div className="hero-copy">
           <Badge variant="outline" className="hero-kicker">
-            Transition-first Spotify optimizer
+            Audio Lab mode
           </Badge>
           <h1>Mix Optimizer</h1>
           <p>
-            Treat your playlist like a DJ set. The optimizer pulls tempo, key,
-            and energy data to find a smoother ordering and spins up a new
-            playlist with a crisp &quot;_optimized&quot; suffix.
+            Build DJ-grade transitions with measurable control. Optimize key
+            compatibility, tempo flow, and edge roughness into a new playlist
+            that preserves vibe while cutting harsh handoffs.
           </p>
+          <div className="hero-stats">
+            <Badge variant="secondary">{profile ? "Spotify linked" : "Spotify not linked"}</Badge>
+            <Badge variant="outline">BPM + key diagnostics</Badge>
+          </div>
         </div>
         <motion.div
-          whileHover={{ y: -4, scale: 1.01 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
+          whileHover={{ y: -2 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
         >
-          <Card className="console-panel">
+          <Card className="console-panel signal-board">
             <CardHeader>
-              <CardTitle>Signal Path</CardTitle>
+              <CardTitle>Signal Board</CardTitle>
               <CardDescription>
-                Live transition pressure across the current optimization pass.
+                Snapshot of transition strain distribution before a run.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -712,15 +716,12 @@ export default function HomePage() {
                 {Array.from({ length: 12 }).map((_, index) => (
                   <motion.span
                     key={index}
-                    animate={{
-                      height: [12 + (index % 5) * 4, 24 + (index % 4) * 5, 16 + (index % 3) * 3],
-                      opacity: [0.35, 0.95, 0.45],
-                    }}
+                    initial={{ height: 6, opacity: 0.2 }}
+                    animate={{ height: 12 + (index % 5) * 5, opacity: 0.85 }}
                     transition={{
-                      duration: 1.9 + (index % 4) * 0.2,
-                      repeat: Number.POSITIVE_INFINITY,
-                      ease: "easeInOut",
-                      delay: index * 0.06,
+                      duration: 0.35,
+                      ease: "easeOut",
+                      delay: 0.04 * index,
                     }}
                   />
                 ))}
@@ -732,46 +733,52 @@ export default function HomePage() {
 
       <motion.section className="grid" variants={sectionMotion} custom={0.12}>
         <form className="card form-card" onSubmit={handleSubmit}>
-          <Label htmlFor="playlist">Playlist URL or ID</Label>
-          <Input
-            id="playlist"
-            type="text"
-            placeholder="https://open.spotify.com/playlist/..."
-            value={playlist}
-            onChange={(event) => setPlaylist(event.target.value)}
-            required
-          />
+          <div className="field">
+            <Label htmlFor="playlist">Playlist URL or ID</Label>
+            <Input
+              id="playlist"
+              type="text"
+              placeholder="https://open.spotify.com/playlist/..."
+              value={playlist}
+              onChange={(event) => setPlaylist(event.target.value)}
+              required
+            />
+          </div>
 
-          <Label htmlFor="name">Optional base name</Label>
-          <Input
-            id="name"
-            type="text"
-            placeholder="Late Night Switchups"
-            value={mixName}
-            onChange={(event) => setMixName(event.target.value)}
-          />
+          <div className="field">
+            <Label htmlFor="name">Optional base name</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Late Night Switchups"
+              value={mixName}
+              onChange={(event) => setMixName(event.target.value)}
+            />
+          </div>
 
-          <Label htmlFor="preset">Preset mode</Label>
-          <select
-            id="preset"
-            className="ui-select"
-            value={presetId}
-            onChange={(event) => setPresetId(event.target.value)}
-          >
-            <option value="">Manual tuning</option>
-            {builtinPresets.map((preset) => (
-              <option key={preset.preset_id} value={preset.preset_id}>
-                {preset.name}
-              </option>
-            ))}
-          </select>
+          <div className="field">
+            <Label htmlFor="preset">Preset mode</Label>
+            <select
+              id="preset"
+              className="ui-select"
+              value={presetId}
+              onChange={(event) => setPresetId(event.target.value)}
+            >
+              <option value="">Manual tuning</option>
+              {builtinPresets.map((preset) => (
+                <option key={preset.preset_id} value={preset.preset_id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+          </div>
           {activePreset && (
-            <div className="status">
+            <div className="status status-note">
               Preset: <strong>{activePreset.name}</strong> — {activePreset.description}
             </div>
           )}
 
-          <Label>Mix focus</Label>
+          <Label className="label-spacer">Mix focus</Label>
           <div className="segmented segmented-3" role="group" aria-label="Mix focus">
               <Button
                 type="button"
@@ -805,7 +812,7 @@ export default function HomePage() {
               </Button>
             </div>
 
-          <Label>Solver mode</Label>
+          <Label className="label-spacer">Solver mode</Label>
           <div className="segmented" role="group" aria-label="Solver mode">
             <Button
               type="button"
@@ -829,23 +836,25 @@ export default function HomePage() {
             </Button>
           </div>
 
-          <div className="toggle">
+          <div className="toggle form-toggle">
             <input
               id="flow-curve"
+              className="ui-checkbox"
               type="checkbox"
               checked={flowCurve}
               onChange={(event) => setFlowCurve(event.target.checked)}
             />
-            <label htmlFor="flow-curve">
+            <Label htmlFor="flow-curve">
               Flow curve (warm-up {"->"} peak {"->"} cooldown)
-            </label>
+            </Label>
           </div>
 
           <div className="advanced-grid">
-            <div>
-              <label htmlFor="flow-profile">Flow profile</label>
+            <div className="field">
+              <Label htmlFor="flow-profile">Flow profile</Label>
               <select
                 id="flow-profile"
+                className="ui-select"
                 value={flowProfile}
                 onChange={(event) =>
                   setFlowProfile(event.target.value as "peak" | "gentle" | "cooldown")
@@ -857,9 +866,9 @@ export default function HomePage() {
               </select>
             </div>
 
-            <div>
-              <label htmlFor="key-lock-window">Key lock window</label>
-              <input
+            <div className="field">
+              <Label htmlFor="key-lock-window">Key lock window</Label>
+              <Input
                 id="key-lock-window"
                 type="number"
                 min={1}
@@ -876,10 +885,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="tempo-ramp-weight">Tempo ramp weight</label>
+            <div className="field">
+              <Label htmlFor="tempo-ramp-weight">Tempo ramp weight</Label>
               <input
                 id="tempo-ramp-weight"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={0.25}
@@ -890,9 +900,9 @@ export default function HomePage() {
               <div className="range-value">{tempoRampWeight.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="minimax-passes">Minimax passes</label>
-              <input
+            <div className="field">
+              <Label htmlFor="minimax-passes">Minimax passes</Label>
+              <Input
                 id="minimax-passes"
                 type="number"
                 min={0}
@@ -909,9 +919,9 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="beam-width">Beam width</label>
-              <input
+            <div className="field">
+              <Label htmlFor="beam-width">Beam width</Label>
+              <Input
                 id="beam-width"
                 type="number"
                 min={1}
@@ -928,9 +938,9 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="anneal-steps">Anneal steps</label>
-              <input
+            <div className="field">
+              <Label htmlFor="anneal-steps">Anneal steps</Label>
+              <Input
                 id="anneal-steps"
                 type="number"
                 min={0}
@@ -947,10 +957,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="anneal-temp-start">Anneal start temp</label>
+            <div className="field">
+              <Label htmlFor="anneal-temp-start">Anneal start temp</Label>
               <input
                 id="anneal-temp-start"
+                className="ui-range"
                 type="range"
                 min={0.001}
                 max={0.3}
@@ -961,10 +972,11 @@ export default function HomePage() {
               <div className="range-value">{annealTempStart.toFixed(3)}</div>
             </div>
 
-            <div>
-              <label htmlFor="anneal-temp-end">Anneal end temp</label>
+            <div className="field">
+              <Label htmlFor="anneal-temp-end">Anneal end temp</Label>
               <input
                 id="anneal-temp-end"
+                className="ui-range"
                 type="range"
                 min={0.001}
                 max={0.1}
@@ -975,9 +987,9 @@ export default function HomePage() {
               <div className="range-value">{annealTempEnd.toFixed(3)}</div>
             </div>
 
-            <div>
-              <label htmlFor="lookahead-horizon">Lookahead horizon</label>
-              <input
+            <div className="field">
+              <Label htmlFor="lookahead-horizon">Lookahead horizon</Label>
+              <Input
                 id="lookahead-horizon"
                 type="number"
                 min={1}
@@ -994,10 +1006,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="lookahead-decay">Lookahead decay</label>
+            <div className="field">
+              <Label htmlFor="lookahead-decay">Lookahead decay</Label>
               <input
                 id="lookahead-decay"
+                className="ui-range"
                 type="range"
                 min={0.05}
                 max={0.99}
@@ -1008,10 +1021,11 @@ export default function HomePage() {
               <div className="range-value">{lookaheadDecay.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="smoothness-weight">Smoothness weight</label>
+            <div className="field">
+              <Label htmlFor="smoothness-weight">Smoothness weight</Label>
               <input
                 id="smoothness-weight"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={5}
@@ -1022,10 +1036,11 @@ export default function HomePage() {
               <div className="range-value">{smoothnessWeight.toFixed(1)}</div>
             </div>
 
-            <div>
-              <label htmlFor="variety-weight">Variety weight</label>
+            <div className="field">
+              <Label htmlFor="variety-weight">Variety weight</Label>
               <input
                 id="variety-weight"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={5}
@@ -1036,10 +1051,11 @@ export default function HomePage() {
               <div className="range-value">{varietyWeight.toFixed(1)}</div>
             </div>
 
-            <div>
-              <label htmlFor="bpm-window">BPM window</label>
+            <div className="field">
+              <Label htmlFor="bpm-window">BPM window</Label>
               <input
                 id="bpm-window"
+                className="ui-range"
                 type="range"
                 min={0.01}
                 max={0.3}
@@ -1050,9 +1066,9 @@ export default function HomePage() {
               <div className="range-value">{bpmWindow.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="max-bpm-jump">Max BPM jump (hard)</label>
-              <input
+            <div className="field">
+              <Label htmlFor="max-bpm-jump">Max BPM jump (hard)</Label>
+              <Input
                 id="max-bpm-jump"
                 type="number"
                 min={0}
@@ -1069,10 +1085,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="min-key-compatibility">Min key compatibility</label>
+            <div className="field">
+              <Label htmlFor="min-key-compatibility">Min key compatibility</Label>
               <input
                 id="min-key-compatibility"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={1}
@@ -1083,9 +1100,9 @@ export default function HomePage() {
               <div className="range-value">{minKeyCompatibility.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="no-repeat-artist-within">No repeat artist within</label>
-              <input
+            <div className="field">
+              <Label htmlFor="no-repeat-artist-within">No repeat artist within</Label>
+              <Input
                 id="no-repeat-artist-within"
                 type="number"
                 min={0}
@@ -1103,8 +1120,8 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="result" style={{ marginTop: 6 }}>
-            <div className="button-row" style={{ marginBottom: 12 }}>
+          <div className="result objective-panel">
+            <div className="button-row objective-actions">
               <Button type="button" variant="ghost" size="sm" onClick={resetObjective}>
                 Reset objective weights
               </Button>
@@ -1155,17 +1172,21 @@ export default function HomePage() {
           </div>
 
           {status && <div className="status">{status}</div>}
-          {error && <div className="status">{error}</div>}
+          {error && <div className="status status-error">{error}</div>}
 
           {result && (
-            <div className="result">
-              <Badge className="pill">Transition score: {result.transition_score}</Badge>
-              <div className="status">
+            <div className="result run-output">
+              <div className="result-header">
+                <Badge className="pill">Transition score: {result.transition_score}</Badge>
+                <Badge variant="outline">Run ID: {result.run_id.slice(0, 12)}</Badge>
+              </div>
+              <div className="status result-link">
                 New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
               </div>
 
               {result.roughest?.length > 0 && (
-                <div className="list">
+                <div className="list rough-list">
+                  <div className="list-caption">Roughest edges</div>
                   {result.roughest.map((item, index) => (
                     <div className="list-item" key={`${item.from}-${index}`}>
                       {item.from} {"->"} {item.to} | score {item.score.toFixed(3)} | BPM{" "}
@@ -1190,7 +1211,8 @@ export default function HomePage() {
 
               {transitionDetails.length > 0 && (
                 <div className="transition-diagnostics">
-                  <div className="list">
+                  <div className="list edge-list">
+                    <div className="list-caption">Top transition diagnostics</div>
                     {transitionDetails.slice(0, 12).map((item, index) => (
                       <button
                         type="button"
@@ -1198,6 +1220,7 @@ export default function HomePage() {
                         className={`list-item transition-item ${
                           index === selectedTransitionIndex ? "active" : ""
                         }`}
+                        aria-pressed={index === selectedTransitionIndex}
                         onClick={() => setSelectedTransitionIndex(index)}
                       >
                         {item.from_track} {"->"} {item.to_track} | {item.reason_code} | score{" "}
@@ -1207,11 +1230,11 @@ export default function HomePage() {
                   </div>
                   {selectedTransition && (
                     <div className="transition-detail">
-                      <div className="status">{selectedTransition.reason}</div>
+                      <div className="status detail-reason">{selectedTransition.reason}</div>
                       <div className="weight-grid">
                         {Object.entries(selectedTransition.component_share || {}).map(
                           ([key, value]) => (
-                            <div className="list-item" key={key}>
+                            <div className="list-item mini-chip" key={key}>
                               {key}: {(value * 100).toFixed(1)}%
                             </div>
                           )
@@ -1245,77 +1268,82 @@ export default function HomePage() {
           <Card className="card side-card">
             <CardHeader>
               <CardTitle>A/B Compare Runs</CardTitle>
+              <CardDescription>Quickly benchmark two optimization runs.</CardDescription>
             </CardHeader>
-            <CardContent>
-            <Label htmlFor="compare-baseline">Baseline run</Label>
-            <select
-              id="compare-baseline"
-              className="ui-select"
-              value={compareBaselineRunId}
-              onChange={(event) => setCompareBaselineRunId(event.target.value)}
-            >
-              <option value="">Select baseline run</option>
-              {recentRuns.map((runId) => (
-                <option key={`base-${runId}`} value={runId}>
-                  {runId}
-                </option>
-              ))}
-            </select>
-
-            <Label htmlFor="compare-candidate">Candidate run</Label>
-            <select
-              id="compare-candidate"
-              className="ui-select"
-              value={compareCandidateRunId}
-              onChange={(event) => setCompareCandidateRunId(event.target.value)}
-            >
-              <option value="">Select candidate run</option>
-              {recentRuns.map((runId) => (
-                <option key={`cand-${runId}`} value={runId}>
-                  {runId}
-                </option>
-              ))}
-            </select>
-            <div className="button-row">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCompareRuns}
-                disabled={isComparing}
-              >
-                {isComparing ? "Comparing..." : "Compare"}
-              </Button>
-            </div>
-            {compareError && <div className="status">{compareError}</div>}
-            {compareResult && (
-              <div className="result">
-                <div className="list">
-                  <div className="list-item">
-                    Mean edge delta: {compareResult.delta.mean_edge_score_delta.toFixed(4)}
-                  </div>
-                  <div className="list-item">
-                    Max edge delta: {compareResult.delta.max_edge_score_delta.toFixed(4)}
-                  </div>
-                  <div className="list-item">
-                    Transition delta: {compareResult.delta.transition_score_delta.toFixed(4)}
-                  </div>
-                </div>
-                {!!compareResult.most_improved?.length && (
-                  <div className="status">
-                    Top improved: {compareResult.most_improved[0].baseline_edge.from_track} {"->"}{" "}
-                    {compareResult.most_improved[0].baseline_edge.to_track} (
-                    {compareResult.most_improved[0].score_delta.toFixed(4)})
-                  </div>
-                )}
-                {!!compareResult.most_regressed?.length && (
-                  <div className="status">
-                    Top regressed: {compareResult.most_regressed[0].baseline_edge.from_track} {"->"}{" "}
-                    {compareResult.most_regressed[0].baseline_edge.to_track} (
-                    {compareResult.most_regressed[0].score_delta.toFixed(4)})
-                  </div>
-                )}
+            <CardContent className="compare-panel">
+              <div className="field">
+                <Label htmlFor="compare-baseline">Baseline run</Label>
+                <select
+                  id="compare-baseline"
+                  className="ui-select"
+                  value={compareBaselineRunId}
+                  onChange={(event) => setCompareBaselineRunId(event.target.value)}
+                >
+                  <option value="">Select baseline run</option>
+                  {recentRuns.map((runId) => (
+                    <option key={`base-${runId}`} value={runId}>
+                      {runId}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
+
+              <div className="field">
+                <Label htmlFor="compare-candidate">Candidate run</Label>
+                <select
+                  id="compare-candidate"
+                  className="ui-select"
+                  value={compareCandidateRunId}
+                  onChange={(event) => setCompareCandidateRunId(event.target.value)}
+                >
+                  <option value="">Select candidate run</option>
+                  {recentRuns.map((runId) => (
+                    <option key={`cand-${runId}`} value={runId}>
+                      {runId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="button-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCompareRuns}
+                  disabled={isComparing}
+                >
+                  {isComparing ? "Comparing..." : "Compare"}
+                </Button>
+              </div>
+              {compareError && <div className="status status-error">{compareError}</div>}
+              {compareResult && (
+                <div className="result compare-output">
+                  <div className="list">
+                    <div className="list-item">
+                      Mean edge delta: {compareResult.delta.mean_edge_score_delta.toFixed(4)}
+                    </div>
+                    <div className="list-item">
+                      Max edge delta: {compareResult.delta.max_edge_score_delta.toFixed(4)}
+                    </div>
+                    <div className="list-item">
+                      Transition delta: {compareResult.delta.transition_score_delta.toFixed(4)}
+                    </div>
+                  </div>
+                  {!!compareResult.most_improved?.length && (
+                    <div className="status">
+                      Top improved: {compareResult.most_improved[0].baseline_edge.from_track} {"->"}{" "}
+                      {compareResult.most_improved[0].baseline_edge.to_track} (
+                      {compareResult.most_improved[0].score_delta.toFixed(4)})
+                    </div>
+                  )}
+                  {!!compareResult.most_regressed?.length && (
+                    <div className="status">
+                      Top regressed: {compareResult.most_regressed[0].baseline_edge.from_track} {"->"}{" "}
+                      {compareResult.most_regressed[0].baseline_edge.to_track} (
+                      {compareResult.most_regressed[0].score_delta.toFixed(4)})
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card className="card side-card">
@@ -1326,79 +1354,79 @@ export default function HomePage() {
                 scoring. Uses heuristic fallback when no model is active.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-            <div className="list">
-              <div className="list-item">
-                Active: {modelStatus?.active_version ?? "none"}
-              </div>
-              <div className="list-item">
-                Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Samples: {modelStatus?.sample_count ?? 0}
-              </div>
-              <div className="list-item">
-                Gate min accuracy:{" "}
-                {(modelStatus?.quality_gate_thresholds?.min_accuracy ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Gate max loss: {(modelStatus?.quality_gate_thresholds?.max_loss ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Promotion min acc delta:{" "}
-                {(modelStatus?.promotion_thresholds?.min_accuracy_delta ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Promotion max loss delta:{" "}
-                {(modelStatus?.promotion_thresholds?.max_loss_delta ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Active gate:{" "}
-                {modelStatus?.active_quality_gate
-                  ? modelStatus.active_quality_gate.passed
-                    ? "pass"
-                    : "fail"
-                  : "n/a"}
-              </div>
-            </div>
-            {modelEvaluation && (
-              <div className="list" style={{ marginTop: 12 }}>
+            <CardContent className="model-panel">
+              <div className="list">
                 <div className="list-item">
-                  Feedback window: {modelEvaluation.window_days}d | labeled edges:{" "}
-                  {modelEvaluation.total_labeled_feedback}
+                  Active: {modelStatus?.active_version ?? "none"}
                 </div>
-                {modelEvaluation.active_metrics && (
+                <div className="list-item">
+                  Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Samples: {modelStatus?.sample_count ?? 0}
+                </div>
+                <div className="list-item">
+                  Gate min accuracy:{" "}
+                  {(modelStatus?.quality_gate_thresholds?.min_accuracy ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Gate max loss: {(modelStatus?.quality_gate_thresholds?.max_loss ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Promotion min acc delta:{" "}
+                  {(modelStatus?.promotion_thresholds?.min_accuracy_delta ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Promotion max loss delta:{" "}
+                  {(modelStatus?.promotion_thresholds?.max_loss_delta ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Active gate:{" "}
+                  {modelStatus?.active_quality_gate
+                    ? modelStatus.active_quality_gate.passed
+                      ? "pass"
+                      : "fail"
+                    : "n/a"}
+                </div>
+              </div>
+              {modelEvaluation && (
+                <div className="list panel-sublist">
                   <div className="list-item">
-                    Active feedback stats: rough {modelEvaluation.active_metrics.rough_rate.toFixed(2)} |
-                    mean rating {modelEvaluation.active_metrics.mean_rating.toFixed(2)}
+                    Feedback window: {modelEvaluation.window_days}d | labeled edges:{" "}
+                    {modelEvaluation.total_labeled_feedback}
                   </div>
-                )}
-                {modelEvaluation.versions.slice(0, 3).map((item) => (
-                  <div className="list-item" key={`model-eval-${item.version}`}>
-                    {item.version}: {item.sample_count} labels | rough {item.rough_rate.toFixed(2)} |
-                    positive {item.positive_ratio.toFixed(2)}
-                  </div>
-                ))}
+                  {modelEvaluation.active_metrics && (
+                    <div className="list-item">
+                      Active feedback stats: rough {modelEvaluation.active_metrics.rough_rate.toFixed(2)} |
+                      mean rating {modelEvaluation.active_metrics.mean_rating.toFixed(2)}
+                    </div>
+                  )}
+                  {modelEvaluation.versions.slice(0, 3).map((item) => (
+                    <div className="list-item" key={`model-eval-${item.version}`}>
+                      {item.version}: {item.sample_count} labels | rough {item.rough_rate.toFixed(2)} |
+                      positive {item.positive_ratio.toFixed(2)}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="button-row panel-sublist">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleTrainModel}
+                  disabled={isTrainingModel}
+                >
+                  {isTrainingModel ? "Training..." : "Train model"}
+                </Button>
               </div>
-            )}
-            <div className="button-row" style={{ marginTop: 12 }}>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleTrainModel}
-                disabled={isTrainingModel}
-              >
-                {isTrainingModel ? "Training..." : "Train model"}
-              </Button>
-            </div>
-            {modelTrainingJob && (
-              <div className="list" style={{ marginTop: 12 }}>
-                <div className="list-item">Job: {modelTrainingJob.job_id}</div>
-                <div className="list-item">Status: {modelTrainingJob.status}</div>
-                <div className="list-item">Progress: {modelTrainingJob.progress ?? 0}%</div>
-              </div>
-            )}
-            {modelMessage && <div className="status">{modelMessage}</div>}
+              {modelTrainingJob && (
+                <div className="list panel-sublist">
+                  <div className="list-item">Job: {modelTrainingJob.job_id}</div>
+                  <div className="list-item">Status: {modelTrainingJob.status}</div>
+                  <div className="list-item">Progress: {modelTrainingJob.progress ?? 0}%</div>
+                </div>
+              )}
+              {modelMessage && <div className="status">{modelMessage}</div>}
             </CardContent>
           </Card>
           <Card className="card side-card">
