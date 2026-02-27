@@ -559,9 +559,23 @@ input[type="range"],
   gap: 18px;
 }
 
+.compare-panel,
+.model-panel {
+  display: grid;
+  gap: 2px;
+}
+
+.compare-output {
+  margin-top: 10px;
+}
+
+.panel-sublist {
+  margin-top: 10px;
+}
+
 .disclaimer {
   margin: 0;
-  color: #586274;
+  color: #95a5b6;
   font-size: 0.9rem;
   line-height: 1.62;
 }

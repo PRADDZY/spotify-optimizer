@@ -1267,77 +1267,82 @@ export default function HomePage() {
           <Card className="card side-card">
             <CardHeader>
               <CardTitle>A/B Compare Runs</CardTitle>
+              <CardDescription>Quickly benchmark two optimization runs.</CardDescription>
             </CardHeader>
-            <CardContent>
-            <Label htmlFor="compare-baseline">Baseline run</Label>
-            <select
-              id="compare-baseline"
-              className="ui-select"
-              value={compareBaselineRunId}
-              onChange={(event) => setCompareBaselineRunId(event.target.value)}
-            >
-              <option value="">Select baseline run</option>
-              {recentRuns.map((runId) => (
-                <option key={`base-${runId}`} value={runId}>
-                  {runId}
-                </option>
-              ))}
-            </select>
-
-            <Label htmlFor="compare-candidate">Candidate run</Label>
-            <select
-              id="compare-candidate"
-              className="ui-select"
-              value={compareCandidateRunId}
-              onChange={(event) => setCompareCandidateRunId(event.target.value)}
-            >
-              <option value="">Select candidate run</option>
-              {recentRuns.map((runId) => (
-                <option key={`cand-${runId}`} value={runId}>
-                  {runId}
-                </option>
-              ))}
-            </select>
-            <div className="button-row">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCompareRuns}
-                disabled={isComparing}
-              >
-                {isComparing ? "Comparing..." : "Compare"}
-              </Button>
-            </div>
-            {compareError && <div className="status">{compareError}</div>}
-            {compareResult && (
-              <div className="result">
-                <div className="list">
-                  <div className="list-item">
-                    Mean edge delta: {compareResult.delta.mean_edge_score_delta.toFixed(4)}
-                  </div>
-                  <div className="list-item">
-                    Max edge delta: {compareResult.delta.max_edge_score_delta.toFixed(4)}
-                  </div>
-                  <div className="list-item">
-                    Transition delta: {compareResult.delta.transition_score_delta.toFixed(4)}
-                  </div>
-                </div>
-                {!!compareResult.most_improved?.length && (
-                  <div className="status">
-                    Top improved: {compareResult.most_improved[0].baseline_edge.from_track} {"->"}{" "}
-                    {compareResult.most_improved[0].baseline_edge.to_track} (
-                    {compareResult.most_improved[0].score_delta.toFixed(4)})
-                  </div>
-                )}
-                {!!compareResult.most_regressed?.length && (
-                  <div className="status">
-                    Top regressed: {compareResult.most_regressed[0].baseline_edge.from_track} {"->"}{" "}
-                    {compareResult.most_regressed[0].baseline_edge.to_track} (
-                    {compareResult.most_regressed[0].score_delta.toFixed(4)})
-                  </div>
-                )}
+            <CardContent className="compare-panel">
+              <div className="field">
+                <Label htmlFor="compare-baseline">Baseline run</Label>
+                <select
+                  id="compare-baseline"
+                  className="ui-select"
+                  value={compareBaselineRunId}
+                  onChange={(event) => setCompareBaselineRunId(event.target.value)}
+                >
+                  <option value="">Select baseline run</option>
+                  {recentRuns.map((runId) => (
+                    <option key={`base-${runId}`} value={runId}>
+                      {runId}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
+
+              <div className="field">
+                <Label htmlFor="compare-candidate">Candidate run</Label>
+                <select
+                  id="compare-candidate"
+                  className="ui-select"
+                  value={compareCandidateRunId}
+                  onChange={(event) => setCompareCandidateRunId(event.target.value)}
+                >
+                  <option value="">Select candidate run</option>
+                  {recentRuns.map((runId) => (
+                    <option key={`cand-${runId}`} value={runId}>
+                      {runId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="button-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCompareRuns}
+                  disabled={isComparing}
+                >
+                  {isComparing ? "Comparing..." : "Compare"}
+                </Button>
+              </div>
+              {compareError && <div className="status status-error">{compareError}</div>}
+              {compareResult && (
+                <div className="result compare-output">
+                  <div className="list">
+                    <div className="list-item">
+                      Mean edge delta: {compareResult.delta.mean_edge_score_delta.toFixed(4)}
+                    </div>
+                    <div className="list-item">
+                      Max edge delta: {compareResult.delta.max_edge_score_delta.toFixed(4)}
+                    </div>
+                    <div className="list-item">
+                      Transition delta: {compareResult.delta.transition_score_delta.toFixed(4)}
+                    </div>
+                  </div>
+                  {!!compareResult.most_improved?.length && (
+                    <div className="status">
+                      Top improved: {compareResult.most_improved[0].baseline_edge.from_track} {"->"}{" "}
+                      {compareResult.most_improved[0].baseline_edge.to_track} (
+                      {compareResult.most_improved[0].score_delta.toFixed(4)})
+                    </div>
+                  )}
+                  {!!compareResult.most_regressed?.length && (
+                    <div className="status">
+                      Top regressed: {compareResult.most_regressed[0].baseline_edge.from_track} {"->"}{" "}
+                      {compareResult.most_regressed[0].baseline_edge.to_track} (
+                      {compareResult.most_regressed[0].score_delta.toFixed(4)})
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card className="card side-card">
@@ -1348,79 +1353,79 @@ export default function HomePage() {
                 scoring. Uses heuristic fallback when no model is active.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-            <div className="list">
-              <div className="list-item">
-                Active: {modelStatus?.active_version ?? "none"}
-              </div>
-              <div className="list-item">
-                Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Samples: {modelStatus?.sample_count ?? 0}
-              </div>
-              <div className="list-item">
-                Gate min accuracy:{" "}
-                {(modelStatus?.quality_gate_thresholds?.min_accuracy ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Gate max loss: {(modelStatus?.quality_gate_thresholds?.max_loss ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Promotion min acc delta:{" "}
-                {(modelStatus?.promotion_thresholds?.min_accuracy_delta ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Promotion max loss delta:{" "}
-                {(modelStatus?.promotion_thresholds?.max_loss_delta ?? 0).toFixed(2)}
-              </div>
-              <div className="list-item">
-                Active gate:{" "}
-                {modelStatus?.active_quality_gate
-                  ? modelStatus.active_quality_gate.passed
-                    ? "pass"
-                    : "fail"
-                  : "n/a"}
-              </div>
-            </div>
-            {modelEvaluation && (
-              <div className="list" style={{ marginTop: 12 }}>
+            <CardContent className="model-panel">
+              <div className="list">
                 <div className="list-item">
-                  Feedback window: {modelEvaluation.window_days}d | labeled edges:{" "}
-                  {modelEvaluation.total_labeled_feedback}
+                  Active: {modelStatus?.active_version ?? "none"}
                 </div>
-                {modelEvaluation.active_metrics && (
+                <div className="list-item">
+                  Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Samples: {modelStatus?.sample_count ?? 0}
+                </div>
+                <div className="list-item">
+                  Gate min accuracy:{" "}
+                  {(modelStatus?.quality_gate_thresholds?.min_accuracy ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Gate max loss: {(modelStatus?.quality_gate_thresholds?.max_loss ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Promotion min acc delta:{" "}
+                  {(modelStatus?.promotion_thresholds?.min_accuracy_delta ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Promotion max loss delta:{" "}
+                  {(modelStatus?.promotion_thresholds?.max_loss_delta ?? 0).toFixed(2)}
+                </div>
+                <div className="list-item">
+                  Active gate:{" "}
+                  {modelStatus?.active_quality_gate
+                    ? modelStatus.active_quality_gate.passed
+                      ? "pass"
+                      : "fail"
+                    : "n/a"}
+                </div>
+              </div>
+              {modelEvaluation && (
+                <div className="list panel-sublist">
                   <div className="list-item">
-                    Active feedback stats: rough {modelEvaluation.active_metrics.rough_rate.toFixed(2)} |
-                    mean rating {modelEvaluation.active_metrics.mean_rating.toFixed(2)}
+                    Feedback window: {modelEvaluation.window_days}d | labeled edges:{" "}
+                    {modelEvaluation.total_labeled_feedback}
                   </div>
-                )}
-                {modelEvaluation.versions.slice(0, 3).map((item) => (
-                  <div className="list-item" key={`model-eval-${item.version}`}>
-                    {item.version}: {item.sample_count} labels | rough {item.rough_rate.toFixed(2)} |
-                    positive {item.positive_ratio.toFixed(2)}
-                  </div>
-                ))}
+                  {modelEvaluation.active_metrics && (
+                    <div className="list-item">
+                      Active feedback stats: rough {modelEvaluation.active_metrics.rough_rate.toFixed(2)} |
+                      mean rating {modelEvaluation.active_metrics.mean_rating.toFixed(2)}
+                    </div>
+                  )}
+                  {modelEvaluation.versions.slice(0, 3).map((item) => (
+                    <div className="list-item" key={`model-eval-${item.version}`}>
+                      {item.version}: {item.sample_count} labels | rough {item.rough_rate.toFixed(2)} |
+                      positive {item.positive_ratio.toFixed(2)}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="button-row panel-sublist">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleTrainModel}
+                  disabled={isTrainingModel}
+                >
+                  {isTrainingModel ? "Training..." : "Train model"}
+                </Button>
               </div>
-            )}
-            <div className="button-row" style={{ marginTop: 12 }}>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleTrainModel}
-                disabled={isTrainingModel}
-              >
-                {isTrainingModel ? "Training..." : "Train model"}
-              </Button>
-            </div>
-            {modelTrainingJob && (
-              <div className="list" style={{ marginTop: 12 }}>
-                <div className="list-item">Job: {modelTrainingJob.job_id}</div>
-                <div className="list-item">Status: {modelTrainingJob.status}</div>
-                <div className="list-item">Progress: {modelTrainingJob.progress ?? 0}%</div>
-              </div>
-            )}
-            {modelMessage && <div className="status">{modelMessage}</div>}
+              {modelTrainingJob && (
+                <div className="list panel-sublist">
+                  <div className="list-item">Job: {modelTrainingJob.job_id}</div>
+                  <div className="list-item">Status: {modelTrainingJob.status}</div>
+                  <div className="list-item">Progress: {modelTrainingJob.progress ?? 0}%</div>
+                </div>
+              )}
+              {modelMessage && <div className="status">{modelMessage}</div>}
             </CardContent>
           </Card>
           <Card className="card side-card">
