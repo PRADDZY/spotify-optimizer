@@ -681,22 +681,45 @@ export default function HomePage() {
     >
       <div className="ambient-orb ambient-orb-left" aria-hidden="true" />
       <div className="ambient-orb ambient-orb-right" aria-hidden="true" />
-      <motion.section className="hero" variants={sectionMotion} custom={0.06}>
-        <div className="hero-copy">
-          <Badge variant="outline" className="hero-kicker">
-            Audio Lab mode
-          </Badge>
-          <h1>Mix Optimizer</h1>
-          <p>
-            Build DJ-grade transitions with measurable control. Optimize key
-            compatibility, tempo flow, and edge roughness into a new playlist
-            that preserves vibe while cutting harsh handoffs.
-          </p>
-          <div className="hero-stats">
-            <Badge variant="secondary">{profile ? "Spotify linked" : "Spotify not linked"}</Badge>
-            <Badge variant="outline">BPM + key diagnostics</Badge>
-          </div>
-        </div>
+      <motion.section className="overview-grid" variants={sectionMotion} custom={0.06}>
+        <Card className="hero-panel">
+          <CardContent>
+            <div className="hero-copy">
+              <Badge variant="outline" className="hero-kicker">
+                Audio Lab mode
+              </Badge>
+              <h1>Mix Optimizer</h1>
+              <p>
+                Build transition-safe listening flows with precise control over key
+                adjacency, tempo movement, and rough-edge minimization.
+              </p>
+              <div className="hero-meta-grid">
+                <div className="hero-meta">
+                  <span>Mix mode</span>
+                  <strong>{mixMode}</strong>
+                </div>
+                <div className="hero-meta">
+                  <span>Solver</span>
+                  <strong>{solverMode}</strong>
+                </div>
+                <div className="hero-meta">
+                  <span>Flow profile</span>
+                  <strong>{flowProfile}</strong>
+                </div>
+                <div className="hero-meta">
+                  <span>Preset</span>
+                  <strong>{activePreset?.name ?? "Manual"}</strong>
+                </div>
+              </div>
+              <div className="hero-stats">
+                <Badge variant="secondary">
+                  {profile ? "Spotify linked" : "Spotify not linked"}
+                </Badge>
+                <Badge variant="outline">BPM + key diagnostics</Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <motion.div
           whileHover={{ y: -2 }}
           transition={{ duration: 0.2, ease: "easeOut" }}
@@ -705,13 +728,20 @@ export default function HomePage() {
             <CardHeader>
               <CardTitle>Signal Board</CardTitle>
               <CardDescription>
-                Snapshot of transition strain distribution before a run.
+                Live indicators for connection and current optimization context.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Badge className="pill" variant={profile ? "default" : "secondary"}>
                 {profile ? `Connected: ${profile.display_name}` : "Not connected"}
               </Badge>
+              <div className="hero-stats signal-stats">
+                <Badge variant="outline">Beam {beamWidth}</Badge>
+                <Badge variant="outline">Lookahead {lookaheadHorizon}</Badge>
+                <Badge variant="outline">
+                  {flowCurve ? "Flow curve on" : "Flow curve off"}
+                </Badge>
+              </div>
               <div className="meter">
                 {Array.from({ length: 12 }).map((_, index) => (
                   <motion.span
@@ -731,8 +761,10 @@ export default function HomePage() {
         </motion.div>
       </motion.section>
 
-      <motion.section className="grid" variants={sectionMotion} custom={0.12}>
-        <form className="card form-card" onSubmit={handleSubmit}>
+      <motion.section className="workspace-grid" variants={sectionMotion} custom={0.12}>
+        <div className="workspace-main">
+          <form className="card form-card" onSubmit={handleSubmit}>
+          <div className="zone-head">Source</div>
           <div className="field">
             <Label htmlFor="playlist">Playlist URL or ID</Label>
             <Input
@@ -778,6 +810,7 @@ export default function HomePage() {
             </div>
           )}
 
+          <div className="zone-head">Strategy</div>
           <Label className="label-spacer">Mix focus</Label>
           <div className="segmented segmented-3" role="group" aria-label="Mix focus">
               <Button
@@ -849,6 +882,7 @@ export default function HomePage() {
             </Label>
           </div>
 
+          <div className="zone-head">Solver Constraints</div>
           <div className="advanced-grid">
             <div className="field">
               <Label htmlFor="flow-profile">Flow profile</Label>
@@ -1120,6 +1154,7 @@ export default function HomePage() {
             </div>
           </div>
 
+          <div className="zone-head">Objective Weights</div>
           <div className="result objective-panel">
             <div className="button-row objective-actions">
               <Button type="button" variant="ghost" size="sm" onClick={resetObjective}>
@@ -1146,6 +1181,7 @@ export default function HomePage() {
             </div>
           </div>
 
+          <div className="zone-head">Run</div>
           <div className="toggle">
             <input
               id="public"
@@ -1176,12 +1212,14 @@ export default function HomePage() {
 
           {result && (
             <div className="result run-output">
-              <div className="result-header">
-                <Badge className="pill">Transition score: {result.transition_score}</Badge>
-                <Badge variant="outline">Run ID: {result.run_id.slice(0, 12)}</Badge>
-              </div>
-              <div className="status result-link">
-                New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
+              <div className="result-header run-topline">
+                <div className="run-metrics">
+                  <Badge className="pill">Transition score: {result.transition_score}</Badge>
+                  <Badge variant="outline">Run ID: {result.run_id.slice(0, 12)}</Badge>
+                </div>
+                <div className="status result-link">
+                  New playlist: <a href={result.playlist_url}>{result.playlist_name}</a>
+                </div>
               </div>
 
               {result.roughest?.length > 0 && (
@@ -1230,6 +1268,7 @@ export default function HomePage() {
                   </div>
                   {selectedTransition && (
                     <div className="transition-detail">
+                      <div className="list-caption">Selected transition reason</div>
                       <div className="status detail-reason">{selectedTransition.reason}</div>
                       <div className="weight-grid">
                         {Object.entries(selectedTransition.component_share || {}).map(
@@ -1246,12 +1285,14 @@ export default function HomePage() {
               )}
             </div>
           )}
-        </form>
+          </form>
+        </div>
 
-        <div className="side-panel">
+        <aside className="side-panel workspace-rail">
           <Card className="card side-card">
             <CardHeader>
               <CardTitle>How it Optimizes</CardTitle>
+              <CardDescription>Core scoring logic used by the optimizer engine.</CardDescription>
             </CardHeader>
             <CardContent>
               <p className="disclaimer">
@@ -1271,6 +1312,7 @@ export default function HomePage() {
               <CardDescription>Quickly benchmark two optimization runs.</CardDescription>
             </CardHeader>
             <CardContent className="compare-panel">
+              <div className="side-inline-note">Baseline vs candidate edge quality</div>
               <div className="field">
                 <Label htmlFor="compare-baseline">Baseline run</Label>
                 <select
@@ -1355,15 +1397,15 @@ export default function HomePage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="model-panel">
+              <div className="hero-stats">
+                <Badge variant="secondary">
+                  Active: {modelStatus?.active_version ?? "none"}
+                </Badge>
+                <Badge variant="outline">Samples: {modelStatus?.sample_count ?? 0}</Badge>
+              </div>
               <div className="list">
                 <div className="list-item">
-                  Active: {modelStatus?.active_version ?? "none"}
-                </div>
-                <div className="list-item">
                   Blend alpha: {(modelStatus?.alpha ?? 0).toFixed(2)}
-                </div>
-                <div className="list-item">
-                  Samples: {modelStatus?.sample_count ?? 0}
                 </div>
                 <div className="list-item">
                   Gate min accuracy:{" "}
@@ -1441,7 +1483,7 @@ export default function HomePage() {
               </p>
             </CardContent>
           </Card>
-        </div>
+        </aside>
       </motion.section>
     </motion.main>
   );
