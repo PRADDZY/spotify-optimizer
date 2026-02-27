@@ -1,15 +1,15 @@
 import "./globals.css";
-import { Barlow_Condensed, IBM_Plex_Sans } from "next/font/google";
+import { Manrope, Rajdhani } from "next/font/google";
 
-const display = Barlow_Condensed({
+const display = Rajdhani({
   subsets: ["latin"],
-  weight: ["500", "700"],
+  weight: ["500", "600", "700"],
   variable: "--font-display",
 });
 
-const body = IBM_Plex_Sans({
+const body = Manrope({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-body",
 });
 
