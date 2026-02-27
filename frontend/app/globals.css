@@ -219,6 +219,22 @@ body {
   margin-bottom: 12px;
 }
 
+.zone-head {
+  margin: 16px 0 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(191, 205, 221, 0.12);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #90a3b8;
+}
+
+.form-card .zone-head:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
 .label-spacer {
   margin-top: 8px;
 }

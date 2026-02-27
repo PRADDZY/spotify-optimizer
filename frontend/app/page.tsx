@@ -764,6 +764,7 @@ export default function HomePage() {
       <motion.section className="workspace-grid" variants={sectionMotion} custom={0.12}>
         <div className="workspace-main">
           <form className="card form-card" onSubmit={handleSubmit}>
+          <div className="zone-head">Source</div>
           <div className="field">
             <Label htmlFor="playlist">Playlist URL or ID</Label>
             <Input
@@ -809,6 +810,7 @@ export default function HomePage() {
             </div>
           )}
 
+          <div className="zone-head">Strategy</div>
           <Label className="label-spacer">Mix focus</Label>
           <div className="segmented segmented-3" role="group" aria-label="Mix focus">
               <Button
@@ -880,6 +882,7 @@ export default function HomePage() {
             </Label>
           </div>
 
+          <div className="zone-head">Solver Constraints</div>
           <div className="advanced-grid">
             <div className="field">
               <Label htmlFor="flow-profile">Flow profile</Label>
@@ -1151,6 +1154,7 @@ export default function HomePage() {
             </div>
           </div>
 
+          <div className="zone-head">Objective Weights</div>
           <div className="result objective-panel">
             <div className="button-row objective-actions">
               <Button type="button" variant="ghost" size="sm" onClick={resetObjective}>
@@ -1177,6 +1181,7 @@ export default function HomePage() {
             </div>
           </div>
 
+          <div className="zone-head">Run</div>
           <div className="toggle">
             <input
               id="public"
