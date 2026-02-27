@@ -55,7 +55,7 @@ body {
 .app-shell {
   position: relative;
   z-index: 1;
-  max-width: 1220px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 64px 24px 96px;
 }
@@ -365,6 +365,11 @@ input[type="range"],
   transform: translateY(-1px);
 }
 
+.ui-button:focus-visible {
+  outline: 2px solid rgba(57, 255, 136, 0.9);
+  outline-offset: 2px;
+}
+
 .ui-button-size-default {
   min-height: 40px;
   padding: 9px 15px;
@@ -468,7 +473,7 @@ input[type="range"],
 }
 
 .status a {
-  color: #0d7dba;
+  color: #56ffa6;
   text-decoration: none;
   font-weight: 700;
 }
@@ -531,6 +536,12 @@ input[type="range"],
 .transition-item {
   width: 100%;
   text-align: left;
+  cursor: pointer;
+}
+
+.transition-item:focus-visible {
+  outline: 2px solid rgba(57, 255, 136, 0.78);
+  outline-offset: 2px;
 }
 
 .transition-item.active {
@@ -648,5 +659,14 @@ input[type="range"],
   .weight-grid,
   .segmented-3 {
     grid-template-columns: 1fr;
+  }
+
+  .ui-button-size-default,
+  .ui-button-size-sm {
+    min-height: 38px;
+  }
+
+  .list-item {
+    font-size: 0.83rem;
   }
 }

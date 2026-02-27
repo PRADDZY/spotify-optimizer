@@ -1220,6 +1220,7 @@ export default function HomePage() {
                         className={`list-item transition-item ${
                           index === selectedTransitionIndex ? "active" : ""
                         }`}
+                        aria-pressed={index === selectedTransitionIndex}
                         onClick={() => setSelectedTransitionIndex(index)}
                       >
                         {item.from_track} {"->"} {item.to_track} | {item.reason_code} | score{" "}
