@@ -44,17 +44,8 @@ ngrok config add-authtoken YOUR_NGROK_AUTH_TOKEN
 
 ```bash
 mkdir -p ~/.config/ngrok
-cat > ~/.config/ngrok/ngrok.yml <<'YAML'
-version: "2"
-authtoken: YOUR_NGROK_AUTH_TOKEN
-tunnels:
-  api:
-    proto: http
-    addr: 127.0.0.1:8000
-  app:
-    proto: http
-    addr: 127.0.0.1:3000
-YAML
+cp /opt/spotify-optimizer/deploy/ngrok.yml.example ~/.config/ngrok/ngrok.yml
+sed -i "s/YOUR_NGROK_TOKEN/YOUR_NGROK_AUTH_TOKEN/" ~/.config/ngrok/ngrok.yml
 ```
 
 ## 5. Backend + Frontend Env
