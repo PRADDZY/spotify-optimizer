@@ -1,13 +1,13 @@
 import "./globals.css";
-import { Alegreya_Sans, Cinzel } from "next/font/google";
+import { Bebas_Neue, DM_Sans } from "next/font/google";
 
-const display = Cinzel({
+const display = Bebas_Neue({
   subsets: ["latin"],
-  weight: ["400", "700"],
+  weight: ["400"],
   variable: "--font-display",
 });
 
-const body = Alegreya_Sans({
+const body = DM_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "700"],
   variable: "--font-body",
