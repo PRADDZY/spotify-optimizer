@@ -246,7 +246,7 @@ input[type="number"],
 select {
   width: 100%;
   border: 1px solid rgba(186, 204, 221, 0.18);
-  background: rgba(12, 16, 22, 0.86);
+  background: rgba(12, 17, 24, 0.88);
   color: #e8eef5;
   border-radius: 10px;
   font-size: 0.96rem;
@@ -261,8 +261,8 @@ input[type="number"]:focus-visible,
 .ui-select:focus-visible,
 select:focus-visible {
   outline: none;
-  border-color: rgba(57, 255, 136, 0.72);
-  box-shadow: 0 0 0 3px rgba(57, 255, 136, 0.16);
+  border-color: rgba(121, 200, 255, 0.78);
+  box-shadow: 0 0 0 3px rgba(121, 200, 255, 0.16);
 }
 
 .ui-select,
@@ -366,7 +366,7 @@ input[type="range"],
 }
 
 .ui-button:focus-visible {
-  outline: 2px solid rgba(57, 255, 136, 0.9);
+  outline: 2px solid rgba(121, 200, 255, 0.9);
   outline-offset: 2px;
 }
 
@@ -394,22 +394,22 @@ input[type="range"],
 }
 
 .ui-button-default {
-  color: #09120d;
-  border-color: rgba(57, 255, 136, 0.62);
-  background: linear-gradient(135deg, rgba(57, 255, 136, 0.92), rgba(88, 255, 160, 0.86));
-  box-shadow: 0 10px 22px rgba(57, 255, 136, 0.24);
+  color: #07111d;
+  border-color: rgba(121, 200, 255, 0.68);
+  background: linear-gradient(135deg, rgba(121, 200, 255, 0.94), rgba(166, 218, 255, 0.9));
+  box-shadow: 0 10px 22px rgba(121, 200, 255, 0.24);
 }
 
 .ui-button-outline {
   color: #dce7f2;
   border-color: rgba(186, 204, 221, 0.34);
-  background: rgba(18, 24, 31, 0.85);
+  background: rgba(17, 24, 34, 0.78);
 }
 
 .ui-button-ghost {
   color: #9eb1c3;
   border-color: rgba(186, 204, 221, 0.14);
-  background: rgba(18, 24, 31, 0.48);
+  background: rgba(16, 22, 31, 0.36);
 }
 
 .seg {
@@ -417,7 +417,8 @@ input[type="range"],
 }
 
 .seg.active {
-  border-color: rgba(218, 84, 47, 0.45);
+  border-color: rgba(121, 200, 255, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(121, 200, 255, 0.2);
 }
 
 .result {
@@ -473,7 +474,7 @@ input[type="range"],
 }
 
 .status a {
-  color: #56ffa6;
+  color: #a6daff;
   text-decoration: none;
   font-weight: 700;
 }
@@ -604,15 +605,15 @@ input[type="range"],
 }
 
 .ui-badge-default {
-  background: linear-gradient(130deg, rgba(57, 255, 136, 0.2), rgba(88, 255, 160, 0.15));
-  color: #c8ffd9;
-  border-color: rgba(57, 255, 136, 0.46);
+  background: linear-gradient(130deg, rgba(121, 200, 255, 0.22), rgba(166, 218, 255, 0.12));
+  color: #d9edff;
+  border-color: rgba(121, 200, 255, 0.46);
 }
 
 .ui-badge-secondary {
-  background: rgba(173, 255, 204, 0.08);
-  color: #b8c5d2;
-  border-color: rgba(173, 255, 204, 0.2);
+  background: rgba(166, 218, 255, 0.1);
+  color: #b8c7d9;
+  border-color: rgba(166, 218, 255, 0.2);
 }
 
 .ui-badge-outline {
