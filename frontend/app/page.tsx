@@ -733,46 +733,52 @@ export default function HomePage() {
 
       <motion.section className="grid" variants={sectionMotion} custom={0.12}>
         <form className="card form-card" onSubmit={handleSubmit}>
-          <Label htmlFor="playlist">Playlist URL or ID</Label>
-          <Input
-            id="playlist"
-            type="text"
-            placeholder="https://open.spotify.com/playlist/..."
-            value={playlist}
-            onChange={(event) => setPlaylist(event.target.value)}
-            required
-          />
+          <div className="field">
+            <Label htmlFor="playlist">Playlist URL or ID</Label>
+            <Input
+              id="playlist"
+              type="text"
+              placeholder="https://open.spotify.com/playlist/..."
+              value={playlist}
+              onChange={(event) => setPlaylist(event.target.value)}
+              required
+            />
+          </div>
 
-          <Label htmlFor="name">Optional base name</Label>
-          <Input
-            id="name"
-            type="text"
-            placeholder="Late Night Switchups"
-            value={mixName}
-            onChange={(event) => setMixName(event.target.value)}
-          />
+          <div className="field">
+            <Label htmlFor="name">Optional base name</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Late Night Switchups"
+              value={mixName}
+              onChange={(event) => setMixName(event.target.value)}
+            />
+          </div>
 
-          <Label htmlFor="preset">Preset mode</Label>
-          <select
-            id="preset"
-            className="ui-select"
-            value={presetId}
-            onChange={(event) => setPresetId(event.target.value)}
-          >
-            <option value="">Manual tuning</option>
-            {builtinPresets.map((preset) => (
-              <option key={preset.preset_id} value={preset.preset_id}>
-                {preset.name}
-              </option>
-            ))}
-          </select>
+          <div className="field">
+            <Label htmlFor="preset">Preset mode</Label>
+            <select
+              id="preset"
+              className="ui-select"
+              value={presetId}
+              onChange={(event) => setPresetId(event.target.value)}
+            >
+              <option value="">Manual tuning</option>
+              {builtinPresets.map((preset) => (
+                <option key={preset.preset_id} value={preset.preset_id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+          </div>
           {activePreset && (
-            <div className="status">
+            <div className="status status-note">
               Preset: <strong>{activePreset.name}</strong> — {activePreset.description}
             </div>
           )}
 
-          <Label>Mix focus</Label>
+          <Label className="label-spacer">Mix focus</Label>
           <div className="segmented segmented-3" role="group" aria-label="Mix focus">
               <Button
                 type="button"
@@ -806,7 +812,7 @@ export default function HomePage() {
               </Button>
             </div>
 
-          <Label>Solver mode</Label>
+          <Label className="label-spacer">Solver mode</Label>
           <div className="segmented" role="group" aria-label="Solver mode">
             <Button
               type="button"
@@ -830,23 +836,25 @@ export default function HomePage() {
             </Button>
           </div>
 
-          <div className="toggle">
+          <div className="toggle form-toggle">
             <input
               id="flow-curve"
+              className="ui-checkbox"
               type="checkbox"
               checked={flowCurve}
               onChange={(event) => setFlowCurve(event.target.checked)}
             />
-            <label htmlFor="flow-curve">
+            <Label htmlFor="flow-curve">
               Flow curve (warm-up {"->"} peak {"->"} cooldown)
-            </label>
+            </Label>
           </div>
 
           <div className="advanced-grid">
-            <div>
-              <label htmlFor="flow-profile">Flow profile</label>
+            <div className="field">
+              <Label htmlFor="flow-profile">Flow profile</Label>
               <select
                 id="flow-profile"
+                className="ui-select"
                 value={flowProfile}
                 onChange={(event) =>
                   setFlowProfile(event.target.value as "peak" | "gentle" | "cooldown")
@@ -858,9 +866,9 @@ export default function HomePage() {
               </select>
             </div>
 
-            <div>
-              <label htmlFor="key-lock-window">Key lock window</label>
-              <input
+            <div className="field">
+              <Label htmlFor="key-lock-window">Key lock window</Label>
+              <Input
                 id="key-lock-window"
                 type="number"
                 min={1}
@@ -877,10 +885,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="tempo-ramp-weight">Tempo ramp weight</label>
+            <div className="field">
+              <Label htmlFor="tempo-ramp-weight">Tempo ramp weight</Label>
               <input
                 id="tempo-ramp-weight"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={0.25}
@@ -891,9 +900,9 @@ export default function HomePage() {
               <div className="range-value">{tempoRampWeight.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="minimax-passes">Minimax passes</label>
-              <input
+            <div className="field">
+              <Label htmlFor="minimax-passes">Minimax passes</Label>
+              <Input
                 id="minimax-passes"
                 type="number"
                 min={0}
@@ -910,9 +919,9 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="beam-width">Beam width</label>
-              <input
+            <div className="field">
+              <Label htmlFor="beam-width">Beam width</Label>
+              <Input
                 id="beam-width"
                 type="number"
                 min={1}
@@ -929,9 +938,9 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="anneal-steps">Anneal steps</label>
-              <input
+            <div className="field">
+              <Label htmlFor="anneal-steps">Anneal steps</Label>
+              <Input
                 id="anneal-steps"
                 type="number"
                 min={0}
@@ -948,10 +957,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="anneal-temp-start">Anneal start temp</label>
+            <div className="field">
+              <Label htmlFor="anneal-temp-start">Anneal start temp</Label>
               <input
                 id="anneal-temp-start"
+                className="ui-range"
                 type="range"
                 min={0.001}
                 max={0.3}
@@ -962,10 +972,11 @@ export default function HomePage() {
               <div className="range-value">{annealTempStart.toFixed(3)}</div>
             </div>
 
-            <div>
-              <label htmlFor="anneal-temp-end">Anneal end temp</label>
+            <div className="field">
+              <Label htmlFor="anneal-temp-end">Anneal end temp</Label>
               <input
                 id="anneal-temp-end"
+                className="ui-range"
                 type="range"
                 min={0.001}
                 max={0.1}
@@ -976,9 +987,9 @@ export default function HomePage() {
               <div className="range-value">{annealTempEnd.toFixed(3)}</div>
             </div>
 
-            <div>
-              <label htmlFor="lookahead-horizon">Lookahead horizon</label>
-              <input
+            <div className="field">
+              <Label htmlFor="lookahead-horizon">Lookahead horizon</Label>
+              <Input
                 id="lookahead-horizon"
                 type="number"
                 min={1}
@@ -995,10 +1006,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="lookahead-decay">Lookahead decay</label>
+            <div className="field">
+              <Label htmlFor="lookahead-decay">Lookahead decay</Label>
               <input
                 id="lookahead-decay"
+                className="ui-range"
                 type="range"
                 min={0.05}
                 max={0.99}
@@ -1009,10 +1021,11 @@ export default function HomePage() {
               <div className="range-value">{lookaheadDecay.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="smoothness-weight">Smoothness weight</label>
+            <div className="field">
+              <Label htmlFor="smoothness-weight">Smoothness weight</Label>
               <input
                 id="smoothness-weight"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={5}
@@ -1023,10 +1036,11 @@ export default function HomePage() {
               <div className="range-value">{smoothnessWeight.toFixed(1)}</div>
             </div>
 
-            <div>
-              <label htmlFor="variety-weight">Variety weight</label>
+            <div className="field">
+              <Label htmlFor="variety-weight">Variety weight</Label>
               <input
                 id="variety-weight"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={5}
@@ -1037,10 +1051,11 @@ export default function HomePage() {
               <div className="range-value">{varietyWeight.toFixed(1)}</div>
             </div>
 
-            <div>
-              <label htmlFor="bpm-window">BPM window</label>
+            <div className="field">
+              <Label htmlFor="bpm-window">BPM window</Label>
               <input
                 id="bpm-window"
+                className="ui-range"
                 type="range"
                 min={0.01}
                 max={0.3}
@@ -1051,9 +1066,9 @@ export default function HomePage() {
               <div className="range-value">{bpmWindow.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="max-bpm-jump">Max BPM jump (hard)</label>
-              <input
+            <div className="field">
+              <Label htmlFor="max-bpm-jump">Max BPM jump (hard)</Label>
+              <Input
                 id="max-bpm-jump"
                 type="number"
                 min={0}
@@ -1070,10 +1085,11 @@ export default function HomePage() {
               />
             </div>
 
-            <div>
-              <label htmlFor="min-key-compatibility">Min key compatibility</label>
+            <div className="field">
+              <Label htmlFor="min-key-compatibility">Min key compatibility</Label>
               <input
                 id="min-key-compatibility"
+                className="ui-range"
                 type="range"
                 min={0}
                 max={1}
@@ -1084,9 +1100,9 @@ export default function HomePage() {
               <div className="range-value">{minKeyCompatibility.toFixed(2)}</div>
             </div>
 
-            <div>
-              <label htmlFor="no-repeat-artist-within">No repeat artist within</label>
-              <input
+            <div className="field">
+              <Label htmlFor="no-repeat-artist-within">No repeat artist within</Label>
+              <Input
                 id="no-repeat-artist-within"
                 type="number"
                 min={0}
@@ -1104,8 +1120,8 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="result" style={{ marginTop: 6 }}>
-            <div className="button-row" style={{ marginBottom: 12 }}>
+          <div className="result objective-panel">
+            <div className="button-row objective-actions">
               <Button type="button" variant="ghost" size="sm" onClick={resetObjective}>
                 Reset objective weights
               </Button>
@@ -1156,7 +1172,7 @@ export default function HomePage() {
           </div>
 
           {status && <div className="status">{status}</div>}
-          {error && <div className="status">{error}</div>}
+          {error && <div className="status status-error">{error}</div>}
 
           {result && (
             <div className="result">
