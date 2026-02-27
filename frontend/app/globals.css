@@ -94,6 +94,11 @@ body {
   margin-bottom: 34px;
 }
 
+.hero-copy {
+  display: grid;
+  gap: 12px;
+}
+
 .hero h1 {
   margin: 10px 0 10px;
   font-family: var(--font-display), sans-serif;
@@ -117,6 +122,13 @@ body {
   margin-bottom: 8px;
 }
 
+.hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .grid {
   position: relative;
   z-index: 1;
@@ -138,13 +150,13 @@ body {
   overflow: hidden;
 }
 
-.console-panel::after {
+.signal-board::after {
   content: "";
   position: absolute;
   inset: auto 0 0 0;
   height: 44%;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(18, 115, 200, 0.07));
+  background: linear-gradient(180deg, rgba(57, 255, 136, 0), rgba(57, 255, 136, 0.08));
 }
 
 .form-card {
@@ -191,19 +203,19 @@ body {
 }
 
 .meter span {
-  border-radius: 6px;
-  background: linear-gradient(180deg, rgba(46, 169, 161, 0.9), rgba(18, 115, 200, 0.45));
-  box-shadow: 0 8px 14px rgba(18, 115, 200, 0.2);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(57, 255, 136, 0.92), rgba(57, 255, 136, 0.32));
+  box-shadow: 0 10px 16px rgba(57, 255, 136, 0.2);
 }
 
 .meter span:nth-child(3n + 2) {
-  background: linear-gradient(180deg, rgba(242, 106, 61, 0.9), rgba(242, 106, 61, 0.45));
-  box-shadow: 0 8px 14px rgba(242, 106, 61, 0.22);
+  background: linear-gradient(180deg, rgba(195, 255, 220, 0.9), rgba(195, 255, 220, 0.32));
+  box-shadow: 0 10px 16px rgba(195, 255, 220, 0.2);
 }
 
 .meter span:nth-child(3n + 3) {
-  background: linear-gradient(180deg, rgba(255, 191, 60, 0.9), rgba(255, 191, 60, 0.45));
-  box-shadow: 0 8px 14px rgba(255, 191, 60, 0.24);
+  background: linear-gradient(180deg, rgba(122, 255, 175, 0.9), rgba(122, 255, 175, 0.3));
+  box-shadow: 0 10px 16px rgba(122, 255, 175, 0.2);
 }
 
 .ui-label,

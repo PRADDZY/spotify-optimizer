@@ -682,26 +682,30 @@ export default function HomePage() {
       <div className="ambient-orb ambient-orb-left" aria-hidden="true" />
       <div className="ambient-orb ambient-orb-right" aria-hidden="true" />
       <motion.section className="hero" variants={sectionMotion} custom={0.06}>
-        <div>
+        <div className="hero-copy">
           <Badge variant="outline" className="hero-kicker">
-            Transition-first Spotify optimizer
+            Audio Lab mode
           </Badge>
           <h1>Mix Optimizer</h1>
           <p>
-            Treat your playlist like a DJ set. The optimizer pulls tempo, key,
-            and energy data to find a smoother ordering and spins up a new
-            playlist with a crisp &quot;_optimized&quot; suffix.
+            Build DJ-grade transitions with measurable control. Optimize key
+            compatibility, tempo flow, and edge roughness into a new playlist
+            that preserves vibe while cutting harsh handoffs.
           </p>
+          <div className="hero-stats">
+            <Badge variant="secondary">{profile ? "Spotify linked" : "Spotify not linked"}</Badge>
+            <Badge variant="outline">BPM + key diagnostics</Badge>
+          </div>
         </div>
         <motion.div
-          whileHover={{ y: -4, scale: 1.01 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
+          whileHover={{ y: -2 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
         >
-          <Card className="console-panel">
+          <Card className="console-panel signal-board">
             <CardHeader>
-              <CardTitle>Signal Path</CardTitle>
+              <CardTitle>Signal Board</CardTitle>
               <CardDescription>
-                Live transition pressure across the current optimization pass.
+                Snapshot of transition strain distribution before a run.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -712,15 +716,12 @@ export default function HomePage() {
                 {Array.from({ length: 12 }).map((_, index) => (
                   <motion.span
                     key={index}
-                    animate={{
-                      height: [12 + (index % 5) * 4, 24 + (index % 4) * 5, 16 + (index % 3) * 3],
-                      opacity: [0.35, 0.95, 0.45],
-                    }}
+                    initial={{ height: 6, opacity: 0.2 }}
+                    animate={{ height: 12 + (index % 5) * 5, opacity: 0.85 }}
                     transition={{
-                      duration: 1.9 + (index % 4) * 0.2,
-                      repeat: Number.POSITIVE_INFINITY,
-                      ease: "easeInOut",
-                      delay: index * 0.06,
+                      duration: 0.35,
+                      ease: "easeOut",
+                      delay: 0.04 * index,
                     }}
                   />
                 ))}
