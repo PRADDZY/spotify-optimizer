@@ -1,18 +1,18 @@
 :root {
-  --bg-0: #07090c;
-  --bg-1: #0d1117;
-  --bg-2: #161d25;
-  --paper: rgba(21, 27, 34, 0.86);
-  --paper-strong: #1a2028;
-  --ink-0: #ecf1f6;
-  --ink-1: #b0bcc9;
-  --ink-2: #7f8b99;
-  --line: rgba(196, 210, 224, 0.16);
-  --line-strong: rgba(196, 210, 224, 0.32);
-  --accent-0: #39ff88;
-  --accent-1: #13d96b;
-  --accent-2: #58ffa0;
-  --accent-3: #adffcc;
+  --bg-0: #0a0d12;
+  --bg-1: #10151d;
+  --bg-2: #181f2a;
+  --paper: rgba(24, 30, 40, 0.86);
+  --paper-strong: #1c2430;
+  --ink-0: #ecf2f9;
+  --ink-1: #b4c0cf;
+  --ink-2: #8693a4;
+  --line: rgba(191, 205, 221, 0.14);
+  --line-strong: rgba(191, 205, 221, 0.28);
+  --accent-0: #79c8ff;
+  --accent-1: #4aa9f0;
+  --accent-2: #a6daff;
+  --accent-3: #d7ecff;
   --danger: #ff5d64;
   --shadow-soft: 0 18px 34px rgba(0, 0, 0, 0.36);
   --shadow-hard: 0 26px 56px rgba(0, 0, 0, 0.48);
@@ -33,9 +33,9 @@ body {
   color: var(--ink-0);
   font-family: var(--font-body), sans-serif;
   background:
-    radial-gradient(1000px 640px at -5% -8%, rgba(57, 255, 136, 0.12), transparent 62%),
-    radial-gradient(860px 520px at 108% 0%, rgba(173, 255, 204, 0.08), transparent 56%),
-    radial-gradient(720px 460px at 86% 92%, rgba(57, 255, 136, 0.09), transparent 62%),
+    radial-gradient(1000px 620px at -4% -8%, rgba(121, 200, 255, 0.14), transparent 62%),
+    radial-gradient(880px 520px at 108% 0%, rgba(166, 218, 255, 0.08), transparent 56%),
+    radial-gradient(760px 500px at 86% 94%, rgba(121, 200, 255, 0.08), transparent 62%),
     linear-gradient(155deg, var(--bg-0) 0%, var(--bg-1) 58%, var(--bg-2) 100%);
 }
 
@@ -44,7 +44,7 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.2;
+  opacity: 0.18;
   background-image:
     radial-gradient(rgba(240, 248, 255, 0.1) 0.7px, transparent 1px),
     radial-gradient(rgba(240, 248, 255, 0.05) 1px, transparent 1px);
@@ -73,7 +73,7 @@ body {
   height: 300px;
   left: -140px;
   top: 92px;
-  background: radial-gradient(circle, rgba(57, 255, 136, 0.24), rgba(57, 255, 136, 0));
+  background: radial-gradient(circle, rgba(121, 200, 255, 0.22), rgba(121, 200, 255, 0));
 }
 
 .ambient-orb-right {
@@ -81,7 +81,7 @@ body {
   height: 280px;
   right: -120px;
   top: 440px;
-  background: radial-gradient(circle, rgba(173, 255, 204, 0.2), rgba(173, 255, 204, 0));
+  background: radial-gradient(circle, rgba(166, 218, 255, 0.18), rgba(166, 218, 255, 0));
 }
 
 .hero {
